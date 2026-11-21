@@ -1,0 +1,64 @@
+// The city document: the unit of saving, undo and export. Plain JSON.
+// Every region is a volume (a terrain-hugging slab); see the foundation design.
+
+export type SettingValue = number | string | boolean;
+export type Settings = Record<string, SettingValue>;
+
+/** A ground point, [x, z], in metres. */
+export type Point2 = [number, number];
+export type Ring = Point2[];
+/** [outer ring (CCW), ...holes (CW)] */
+export type Polygon = Ring[];
+export type MultiPolygon = Polygon[];
+
+/** Metres above the ground beneath each point. `high: null` = open to the sky. */
+export interface HeightRange { ref: 'ground'; low: number; high: number | null }
+
+export interface Slab { type: 'slab'; footprint: MultiPolygon; height: HeightRange }
+
+export type Geometry = Slab;
+
+export interface RegionNode {
+  /** path from the root, e.g. 'site/district:3/block:14' */
+  id: string;
+  /** last path segment, unique among siblings */
+  name: string;
+  kind: string;
+  /** id of the stage that created this node ('site' for the root) */
+  stage: string;
+  geometry: Geometry;
+  /** what this node *is*: values set on it, including applied overrides */
+  attrs: Settings;
+  children: RegionNode[];
+}
+
+export interface StageState { id: string; settings: Settings; seedOffset: number }
+
+export interface Override {
+  id: string;
+  /** the stage whose output it targets */
+  stage: string;
+  kind: string;
+  /** ground point where the user made it */
+  anchor: Point2;
+  settings: Settings;
+  createdAt: string;
+}
+
+export interface CityDoc {
+  format: 'proccity/1';
+  id: string;
+  name: string;
+  createdAt: string;
+  modifiedAt: string;
+  seed: number;
+  site: { size: number };
+  stages: StageState[];
+  /** index of the last generated stage; -1 = none */
+  generatedThrough: number;
+  overrides: Override[];
+  tree: RegionNode;
+}
+
+export const FORMAT = 'proccity/1';
+export const SITE_ID = 'site';
