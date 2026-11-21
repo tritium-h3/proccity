@@ -82,6 +82,11 @@ Runs as the systemd user service **`proccity`** (Vite + API via `concurrently`):
   typescript-eslint doesn't support TS 7 yet; oxlint is silent when clean),
   `npm run build` (the ~1 MB chunk warning is Three.js and expected).
 
+**Stale dev server:** two writes to the same file within a few milliseconds (an append, then
+an edit) can leave Vite serving the first version. Unit tests still pass, since Vitest
+reads fresh. If browser behaviour doesn't match the source, `curl -sk
+https://localhost:5281/src/<file>.ts` and compare. `npm run dev:restart` fixes it.
+
 **Screenshot check:** headless Chrome's capture is 87px taller than the page viewport, so
 a dark strip along the bottom is an artefact, not a layout bug. Pass a window height
 87px larger than the viewport you want:
