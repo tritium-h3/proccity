@@ -265,11 +265,11 @@ use 2D polygon maths underneath). The foundation implements only what the pipeli
 - `area`, `contains(slab, point)` (a ground point, plus an optional height above ground),
   `bounds`, `checkPartition`.
 
-**Library:** `clipper2-js` (Clipper2 port), my call. It does both booleans and
-offsetting, and uses integer coordinates internally, which makes it robust. Scale
-metres to integers at the boundary (a scale of 1000 gives millimetre precision). The
-builder may substitute `polyclip-ts` for booleans if Clipper2 misbehaves, with the reason
-noted. 3D operations (component split, extrude, roof) come with stages 6–7.
+**Library:** `clipper2-ts`. It does both booleans and offsetting, and uses integer
+coordinates internally, which makes it robust. Scale metres to integers at the boundary
+(a scale of 1000 gives millimetre precision). (Changed during implementation:
+`clipper2-js` was tested first and rejected, since its PolyTree output always came back
+empty and insetting a rectangle produced garbage.) 3D operations (component split, extrude, roof) come with stages 6–7.
 
 ## Pipeline
 
