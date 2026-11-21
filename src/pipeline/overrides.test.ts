@@ -4,7 +4,7 @@ import { leaves } from '../doc/tree.js';
 import type { Override, RegionNode } from '../doc/types.js';
 import { rect } from '../grammar/polygon.js';
 import { makeSlab } from '../grammar/slab.js';
-import { debugGrid } from '../stages/debug-grid/stage.js';
+import { fakeGrid as debugGrid } from '../stages/testing.js';
 import { resolveAttr } from '../stages/settings.js';
 import type { Stage } from '../stages/types.js';
 import { describeDrop, resolveOverrides } from './overrides.js';
@@ -12,12 +12,12 @@ import { describeDrop, resolveOverrides } from './overrides.js';
 const site = createSite(2000);
 const cells = debugGrid.run({
   tree: site, leaves: leaves(site), settings: { cells: 3 }, rng: () => 0.1,
-  attr: (n, k) => resolveAttr([n], k, {}),
+  attr: (n, k) => resolveAttr([n], k, {}), overridesForStage: [],
 }).children.get('site')!;
 
 let seq = 0;
 const ov = (anchor: [number, number], settings: Override['settings'], extra: Partial<Override> = {}): Override => ({
-  id: `o${++seq}`, stage: 'debug-grid', kind: 'cell', anchor, settings,
+  id: `o${++seq}`, stage: 'fake-grid', kind: 'cell', anchor, settings,
   createdAt: `2026-11-20T00:00:${String(seq).padStart(2, '0')}.000Z`, ...extra,
 });
 

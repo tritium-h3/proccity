@@ -1,18 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import type { Override } from '../doc/types.js';
-import { STAGES } from '../stages/index.js';
+import { FAKE_STAGES as STAGES } from '../stages/testing.js';
 import { History, regenerateFrom, type EditState } from './history.js';
 
 const base = (): EditState => ({
   seed: 1, site: { size: 2000 }, generatedThrough: 1, overrides: [],
-  stages: [{ id: 'debug-grid', settings: { cells: 6 }, seedOffset: 0 }, { id: 'debug-split', settings: { heightLimit: 60 }, seedOffset: 0 }],
+  stages: [{ id: 'fake-grid', settings: { cells: 6 }, seedOffset: 0 }, { id: 'fake-split', settings: { heightLimit: 60 }, seedOffset: 0 }],
 });
 const withCells = (n: number): EditState => {
   const s = base();
   s.stages[0].settings.cells = n;
   return s;
 };
-const O: Override = { id: 'o1', stage: 'debug-grid', kind: 'cell', anchor: [5, 5], settings: { colour: 'violet' }, createdAt: '2026-11-20T00:00:00.000Z' };
+const O: Override = { id: 'o1', stage: 'fake-grid', kind: 'cell', anchor: [5, 5], settings: { colour: 'violet' }, createdAt: '2026-11-20T00:00:00.000Z' };
 
 describe('History', () => {
   it('undoes and redoes', () => {

@@ -45,8 +45,16 @@ export function* generateIter(req: GenerateRequest): Generator<{ stageIndex: num
       settings,
       rng: createRng(stageSeed(doc.seed, stage.id, state?.seedOffset ?? 0)),
       attr: (node, key) => resolveAttr(ancestry(current, node.id), key, settings),
+      overridesForStage: doc.overrides.filter(o => o.stage === stage.id),
     });
     tree = attachChildren(tree, out.children);
+    for (const [nodeId, data] of out.data ?? []) {
+      const node = findById(tree, nodeId);
+      if (!node) throw new Error(`stage ${stage.id} annotated unknown region ${nodeId}`);
+      node.data = { ...node.data, ...structuredClone(data) };
+      node.dataStage = { ...node.dataStage };
+      for (const key of Object.keys(data) as (keyof typeof data)[]) node.dataStage[key] = stage.id;
+    }
 
     const created: RegionNode[] = [];
     for (const parentId of out.children.keys()) {

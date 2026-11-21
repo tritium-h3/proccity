@@ -13,7 +13,7 @@ import type { Stage } from './types.js';
 function run(stage: Stage, tree: RegionNode, settings: Settings, seed = 1) {
   return stage.run({
     tree, leaves: leaves(tree), settings, rng: rng(seed),
-    attr: (node, key) => resolveAttr(ancestry(tree, node.id), key, settings),
+    attr: (node, key) => resolveAttr(ancestry(tree, node.id), key, settings), overridesForStage: [],
   });
 }
 

@@ -1,4 +1,4 @@
-import type { RegionNode } from './types.js';
+import type { RegionData, RegionNode } from './types.js';
 
 export function childId(parentId: string, name: string): string {
   return `${parentId}/${name}`;
@@ -30,12 +30,24 @@ export function leaves(root: RegionNode): RegionNode[] {
   return out;
 }
 
-/** Deep copy with every node created by one of `stageIds` removed. */
+/** Deep copy with every node created by one of `stageIds` removed, along with any
+ *  data those stages attached to surviving nodes. */
 export function pruneStages(root: RegionNode, stageIds: Set<string>): RegionNode {
-  return {
+  const copy: RegionNode = {
     ...structuredClone({ ...root, children: [] }),
     children: root.children.filter(c => !stageIds.has(c.stage)).map(c => pruneStages(c, stageIds)),
   };
+  if (copy.data && copy.dataStage) {
+    for (const key of Object.keys(copy.dataStage) as (keyof RegionData)[]) {
+      if (stageIds.has(copy.dataStage[key]!)) {
+        delete copy.data[key];
+        delete copy.dataStage[key];
+      }
+    }
+    if (Object.keys(copy.data).length === 0) delete copy.data;
+    if (Object.keys(copy.dataStage).length === 0) delete copy.dataStage;
+  }
+  return copy;
 }
 
 /** Deep copy with `children` appended under their parents (keyed by parent id). */
