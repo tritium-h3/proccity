@@ -154,3 +154,13 @@ describe('terrain has no vertical walls (found in the browser walk-through)', ()
     expect(dry.children.find(c => c.name === 'flat:0')!.attrs.elevation).toBeGreaterThan(3);
   });
 });
+
+describe('flat elevations match the override slider (found in the browser walk-through)', () => {
+  it('uses whole metres, so a step-1 slider never snaps them', () => {
+    for (const seed of [1, 2, 3]) {
+      for (const f of run({ flats: 4 }, seed).children.filter(c => c.kind === 'flat')) {
+        expect(Number.isInteger(f.attrs.elevation)).toBe(true);
+      }
+    }
+  });
+});

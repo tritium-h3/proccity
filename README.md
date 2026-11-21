@@ -4,10 +4,11 @@ Procedural cities, rendered in 3D in the browser with Three.js (WebGPU, falling 
 WebGL 2).
 
 Cities are generated in stages by a shape grammar: each stage divides the regions the
-previous stage produced. The current state is the **foundation**: the city document,
-stage pipeline (in a Web Worker), local overrides, undo/redo, browser storage
-(IndexedDB, plus JSON download/open) and the editor. Two throwaway debug stages exercise it
-until the real stages (terrain, districts, roads, …) are built.
+previous stage produced. Built so far: the foundation (city document, stage pipeline in a
+Web Worker, local overrides, undo/redo, IndexedDB storage plus JSON download/open, the
+editor) and the **terrain** stage. Terrain covers sea, river and ponds, level flats at
+chosen elevations, and slopes and hills, on a height map shaped around the water. Districts
+come next.
 
 ```bash
 npm install

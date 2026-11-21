@@ -124,7 +124,9 @@ export const terrain: Stage = {
       if (n === 0 && wet) return 3;
       const lo = wet ? 3 : 0.2 * s.relief;
       const t = wet ? n / Math.max(1, layout.flats.length - 1) : (n + 1) / layout.flats.length;
-      return round((lo + (0.7 * s.relief - lo) * t) * (1 + (rng() - 0.5) * 0.2));
+      // Whole metres: the elevation override is a step-1 slider, and an off-step value
+      // snaps in the browser and comes back as a spurious edit.
+      return Math.round((lo + (0.7 * s.relief - lo) * t) * (1 + (rng() - 0.5) * 0.2));
     });
     // This stage's own overrides shape its output: apply elevation overrides before pinning.
     for (const o of overridesForStage) {

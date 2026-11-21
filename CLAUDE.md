@@ -8,9 +8,8 @@ Conventions follow `~/.claude/CLAUDE.md`; this file covers what's specific here.
 A **shape grammar** for cities, built in stages (terrain → districts → arterials → blocks →
 lots → lot sections → building parts). Each stage **divides** the regions the previous one
 produced, never adds. The design is `docs/superpowers/specs/2026-11-20-foundation-design.md`.
-Only the foundation exists so far, exercised by two **throwaway** debug stages
-(`debug-grid`, `debug-split`), to be deleted when terrain and districts land. Real stages
-are designed with the owner one at a time.
+Stages so far: **terrain** (`docs/superpowers/specs/2026-11-21-terrain-design.md`). Each
+real stage is designed with the owner one at a time; districts come next.
 
 ## Architecture (`src/`)
 
@@ -18,7 +17,11 @@ are designed with the owner one at a time.
   `RegionNode`s with **resolved geometry**, so a saved city never needs the generator to
   be reproduced. Every region is a **slab**: a footprint multipolygon plus a height range in
   metres *above ground* (`high: null` = open to the sky). Node ids are paths
-  (`site/cell:3-3`). `validate.ts` refuses anything not `proccity/1`.
+  (`site/flat:1`). `validate.ts` refuses anything not `proccity/1`.
+  Regions can carry bulky `data` (`heightfield`, `course`, `stats`), tagged in
+  `dataStage` by the stage that wrote it, so pruning that stage removes it.
+  **Height map heights are metres above sea level; slab heights stay above-ground.**
+  `doc/heightfield.ts` encodes it (base64 Float32) and samples it (bilinear).
 - **`grammar/`: pure geometry.** `split` (along x, z or y; sizes in metres or `'1r'`
   weights), `cut`, `inset`, `band`, plus polygon helpers. `clipper.ts` is the **only** file
   importing the polygon library (`clipper2-ts`; `clipper2-js` was tried and is broken,
@@ -27,10 +30,19 @@ are designed with the owner one at a time.
   dev builds and logs violations.
 - **`stages/`: the stage contract** (`types.ts`). A stage declares a settings schema (the
   editor builds UI from it) and optional per-kind `overridable` local settings, and its
-  `run()` attaches children to leaves. Stages are pure: no DOM, no Three.js. Attributes
+  `run()` attaches children to leaves and may annotate existing regions
+  (`StageOutput.data`). It also receives `overridesForStage`, for stages whose overrides
+  shape their own output (terrain's flat `elevation`). Stages are pure: no DOM, no
+  Three.js. Test-only fake stages live in `stages/testing.ts` and are never in `STAGES`. Attributes
   inherit down the tree through `resolveAttr` (own > ancestors > stage setting).
   **Adding a stage:** a module, a line in `stages/index.ts`, and a renderer in
   `scene/renderers/`.
+- **`stages/terrain/`:** water first (`layout.ts`: sea, river, flats, ponds as
+  polygons), then the height map (`field.ts`: pinned features, two-pass harmonic solve,
+  noise faded by distance from features), then the division into sea, river, pond, flat,
+  slope and hills regions (`stage.ts`). About 235 ms at 2 km. Inland edges are pinned
+  high but taper near the sea and stay free near flats and ponds; pinning them hard
+  produced cliffs and walls.
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
   so regenerating stage k never disturbs earlier stages and undo is exact.
@@ -43,8 +55,10 @@ are designed with the owner one at a time.
 - **`storage/`:** IndexedDB (`proccity` db), debounced autosave, JSON download/open.
   **Loading a saved city shows its stored tree and does not regenerate.**
 - **`scene/`:** `cityScene.ts` (renderer, camera, controls, picking, outlines), `view.ts`
-  (shows the site plus the current stage's regions), `slabMesh.ts` (merged mesh with a
-  face → node lookup). Stage renderers live in `scene/renderers/`, **not on the stage**,
+  (shows the site plus the current stage's regions; `groundHeightAt`; outlines drape over
+  the ground), `slabMesh.ts` (merged mesh with a face → node lookup). The terrain renderer
+  draws the height map as a lit mesh coloured by region, plus water surfaces, and picks by
+  ground point (`nodeIdAt`) rather than by face. Stage renderers live in `scene/renderers/`, **not on the stage**,
   so the worker never bundles Three.js. The current stage's regions cover the site
   completely, so the site ground isn't drawn under them; drawing both z-fights.
 - `server.ts`: placeholder Express backend (`/api/health`). `config.ts`: hosts and ports.

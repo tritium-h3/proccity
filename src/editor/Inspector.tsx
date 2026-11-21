@@ -60,7 +60,10 @@ export function Inspector({ editor }: { editor: CityEditor }) {
             const o = overrideOn(doc, node, f.key);
             return (
               <div key={f.key} className={styles.overrideRow}>
-                <SettingField field={f} value={resolveAttr(path, f.key, {})} onChange={v => actions.setOverride(node.id, f.key, v)} />
+                {/* A pending override's own value, not the generated one: the region only updates
+                    when regeneration lands, and showing the stale value made the slider jump
+                    back mid-edit and report the snapped value as a new edit. */}
+                <SettingField field={f} value={o ? o.settings[f.key] : resolveAttr(path, f.key, {})} onChange={v => actions.setOverride(node.id, f.key, v)} />
                 {o && (
                   <div className={styles.row}>
                     <span className={styles.badge}>override</span>
