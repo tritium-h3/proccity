@@ -1,4 +1,5 @@
 import { FORMAT, type CityDoc } from './types.js';
+import { decodeHeights } from './heightfield.js';
 
 export class CityDocError extends Error {
   constructor(message: string) {
@@ -44,6 +45,20 @@ function checkNode(v: unknown, path: string) {
     fail(`${path}.geometry.height`, "should be { ref: 'ground', low: number, high: number | null }");
   }
   checkSettings(v.attrs, `${path}.attrs`);
+  if (v.data !== undefined) {
+    if (!isObj(v.data)) fail(`${path}.data`, 'should be an object');
+    const hf = v.data.heightfield;
+    if (hf !== undefined) {
+      const at = `${path}.data.heightfield`;
+      if (!isObj(hf) || typeof hf.cell !== 'number' || !Number.isInteger(hf.cols) || !Number.isInteger(hf.rows) || typeof hf.heights !== 'string') {
+        fail(at, 'should be { origin, cell, cols, rows, heights }');
+      }
+      checkPoint(hf.origin, `${at}.origin`);
+      let n = -1;
+      try { n = decodeHeights(hf.heights).length; } catch { /* reported below */ }
+      if (n !== (hf.cols as number) * (hf.rows as number)) fail(at, `heights should hold cols × rows = ${(hf.cols as number) * (hf.rows as number)} values`);
+    }
+  }
   if (!Array.isArray(v.children)) fail(`${path}.children`, 'should be an array');
   v.children.forEach((c: unknown, i: number) => checkNode(c, `${path}.children[${i}]`));
 }

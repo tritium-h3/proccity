@@ -46,3 +46,19 @@ describe('createCityDoc', () => {
     expect(d.tree.geometry.height).toEqual({ ref: 'ground', low: 0, high: null });
   });
 });
+
+import { encodeHeights, makeHeightfield } from './heightfield.js';
+
+describe('parseCityDoc height maps', () => {
+  it('accepts a valid height map on a region', () => {
+    const d = doc();
+    d.tree.data = { heightfield: makeHeightfield([-1000, -1000], 8, 2, 2, new Float32Array([1, 2, 3, 4])) };
+    expect(parseCityDoc(JSON.parse(JSON.stringify(d))).tree.data?.heightfield?.cols).toBe(2);
+  });
+
+  it('rejects heights that decode to the wrong count', () => {
+    const d = doc();
+    d.tree.data = { heightfield: { origin: [0, 0], cell: 8, cols: 3, rows: 3, heights: encodeHeights(new Float32Array(4)) } };
+    expect(() => parseCityDoc(d)).toThrow(/heightfield/);
+  });
+});

@@ -18,6 +18,21 @@ export interface Slab { type: 'slab'; footprint: MultiPolygon; height: HeightRan
 
 export type Geometry = Slab;
 
+/** A height map: metres ABOVE SEA LEVEL on a regular grid (slab heights stay above-ground). */
+export interface Heightfield {
+  /** x, z of grid point (0, 0): the site's min corner */
+  origin: Point2;
+  /** metres between grid points */
+  cell: number;
+  cols: number;
+  rows: number;
+  /** base64 of a little-endian Float32Array, row-major (z, then x) */
+  heights: string;
+}
+
+/** Bulky per-region data a stage may attach to an existing region. */
+export interface RegionData { heightfield?: Heightfield }
+
 export interface RegionNode {
   /** path from the root, e.g. 'site/district:3/block:14' */
   id: string;
@@ -30,6 +45,9 @@ export interface RegionNode {
   /** what this node *is*: values set on it, including applied overrides */
   attrs: Settings;
   children: RegionNode[];
+  data?: RegionData;
+  /** which stage wrote each data key, so pruning that stage removes it */
+  dataStage?: Partial<Record<keyof RegionData, string>>;
 }
 
 export interface StageState { id: string; settings: Settings; seedOffset: number }
