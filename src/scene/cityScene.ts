@@ -1,21 +1,26 @@
 // Owns the renderer, camera, lights and controls. React mounts it into a
-// container element and swaps cities in; everything Three.js lives here.
+// container and pushes ViewStates in; everything Three.js lives here.
 
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { City } from '../city/generate.js';
-import { createCityMeshes, disposeGroup } from './cityMeshes.js';
+import type { Point2 } from '../doc/types.js';
+import { buildView, outline, type BuiltView, type ViewState } from './view.js';
 
 export type Backend = 'WebGPU' | 'WebGL 2';
+export type { ViewState } from './view.js';
+
+export interface PickHit { nodeId: string; point: Point2 }
 
 export interface CityScene {
   /** resolves once the GPU backend is ready */
   ready: Promise<Backend>;
-  setCity(city: City): void;
+  setView(v: ViewState): void;
+  onPick(fn: (hit: PickHit | null) => void): void;
   dispose(): void;
 }
 
 const SKY = 0xb9c8d6;
+const SELECT = 0xe8925f;
 
 export function createCityScene(container: HTMLElement): CityScene {
   // WebGPURenderer uses WebGPU where available and falls back to WebGL 2.
@@ -28,16 +33,16 @@ export function createCityScene(container: HTMLElement): CityScene {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(SKY);
-  scene.fog = new THREE.Fog(SKY, 600, 1600);
+  scene.fog = new THREE.Fog(SKY, 2500, 7000);
 
-  const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
-  camera.position.set(420, 320, 420);
+  const camera = new THREE.PerspectiveCamera(45, 1, 1, 20000);
+  camera.position.set(1400, 1100, 1400);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.maxPolarAngle = Math.PI / 2 - 0.05; // stay above the ground
-  controls.minDistance = 30;
-  controls.maxDistance = 1800;
+  controls.minDistance = 20;
+  controls.maxDistance = 9000;
 
   scene.add(new THREE.HemisphereLight(0xdfe9f3, 0x4a4238, 1.2));
 
@@ -48,29 +53,84 @@ export function createCityScene(container: HTMLElement): CityScene {
   sun.shadow.normalBias = 0.6;
   scene.add(sun, sun.target);
 
-  let cityGroup: THREE.Group | null = null;
+  let built: BuiltView | null = null;
+  let selection: THREE.Group | null = null;
+  let hover: THREE.Group | null = null;
+  let view: ViewState | null = null;
+  let siteSize = 0;
 
-  function setCity(city: City) {
-    if (cityGroup) {
-      scene.remove(cityGroup);
-      disposeGroup(cityGroup);
-    }
-    cityGroup = createCityMeshes(city);
-    scene.add(cityGroup);
+  const clearOutline = (g: THREE.Group | null) => {
+    if (!g) return;
+    scene.remove(g);
+    g.traverse(o => { if (o instanceof THREE.LineLoop) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); } });
+  };
 
-    // Fit the sun's shadow camera to the city so the shadow map isn't wasted.
-    const half = Math.max(city.width, city.depth) / 2;
-    // A low sun (~35°) off to the camera's left, so shadows fall across the
-    // default view instead of hiding behind the buildings that cast them.
+  function fitToSite(size: number) {
+    if (size === siteSize) return;
+    siteSize = size;
+    const half = size / 2;
+    // A low sun (~35°) off to the camera's left, so shadows fall across the view.
     sun.position.set(-half * 0.9, half * 0.9, half * 1.0);
     const cam = sun.shadow.camera;
-    cam.left = -half * 1.2;
-    cam.right = half * 1.2;
-    cam.top = half * 1.2;
-    cam.bottom = -half * 1.2;
-    cam.near = 1;
-    cam.far = half * 5;
+    cam.left = -half * 1.2; cam.right = half * 1.2; cam.top = half * 1.2; cam.bottom = -half * 1.2;
+    cam.near = 1; cam.far = half * 5;
     cam.updateProjectionMatrix();
+    (scene.fog as THREE.Fog).near = size * 1.25;
+    (scene.fog as THREE.Fog).far = size * 3.5;
+  }
+
+  function setView(v: ViewState) {
+    view = v;
+    if (built) { scene.remove(built.group); built.dispose(); }
+    built = buildView(v);
+    scene.add(built.group);
+    const b = v.tree.geometry.footprint[0]?.[0];
+    if (b) fitToSite(Math.max(...b.map(p => Math.abs(p[0]))) * 2);
+    clearOutline(selection);
+    selection = v.selectedId ? outline(v.tree, v.selectedId, SELECT, 1) : null;
+    if (selection) scene.add(selection);
+  }
+
+  // Picking: a click without a drag raycasts the current stage's meshes.
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let pickFn: ((hit: PickHit | null) => void) | null = null;
+  let down: { x: number; y: number } | null = null;
+
+  function hitAt(e: PointerEvent): PickHit | null {
+    if (!built) return null;
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObjects(built.pickables.map(p => p.mesh), false);
+    // Prefer the current stage's regions over the site ground beneath them.
+    const ordered = [...hits.filter(h => built!.pickables.findIndex(p => p.mesh === h.object) > 0), ...hits];
+    const h = ordered[0];
+    if (!h || h.faceIndex == null) return null;
+    const p = built.pickables.find(pk => pk.mesh === h.object)!;
+    return { nodeId: p.nodeIdForFace(h.faceIndex), point: [h.point.x, h.point.z] };
+  }
+
+  const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
+  const onUp = (e: PointerEvent) => {
+    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) { down = null; return; }
+    down = null;
+    pickFn?.(hitAt(e));
+  };
+  let hoverQueued: PointerEvent | null = null;
+  const onMove = (e: PointerEvent) => { hoverQueued = e; };
+  renderer.domElement.addEventListener('pointerdown', onDown);
+  renderer.domElement.addEventListener('pointerup', onUp);
+  renderer.domElement.addEventListener('pointermove', onMove);
+
+  function updateHover() {
+    if (!hoverQueued || !view) return;
+    const e = hoverQueued;
+    hoverQueued = null;
+    const hit = hitAt(e);
+    clearOutline(hover);
+    hover = hit && hit.nodeId !== view.selectedId ? outline(view.tree, hit.nodeId, SELECT, 0.4) : null;
+    if (hover) scene.add(hover);
   }
 
   function resize() {
@@ -88,6 +148,7 @@ export function createCityScene(container: HTMLElement): CityScene {
   const ready = renderer.init().then(() => {
     if (disposed) throw new Error('disposed');
     renderer.setAnimationLoop(() => {
+      updateHover(); // at most one hover raycast per frame
       controls.update();
       renderer.render(scene, camera);
     });
@@ -97,13 +158,19 @@ export function createCityScene(container: HTMLElement): CityScene {
 
   return {
     ready,
-    setCity,
+    setView,
+    onPick(fn) { pickFn = fn; },
     dispose() {
       disposed = true;
       observer.disconnect();
+      renderer.domElement.removeEventListener('pointerdown', onDown);
+      renderer.domElement.removeEventListener('pointerup', onUp);
+      renderer.domElement.removeEventListener('pointermove', onMove);
       renderer.setAnimationLoop(null);
       controls.dispose();
-      if (cityGroup) disposeGroup(cityGroup);
+      built?.dispose();
+      clearOutline(selection);
+      clearOutline(hover);
       renderer.dispose();
       renderer.domElement.remove();
     },
