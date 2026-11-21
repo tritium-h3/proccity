@@ -1,0 +1,12 @@
+.env
+node_modules
+dist
+*.log
+*.local
+.superpowers/
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+# Runtime state
+data/
