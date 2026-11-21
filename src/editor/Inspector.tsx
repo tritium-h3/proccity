@@ -45,6 +45,9 @@ export function Inspector({ editor }: { editor: CityEditor }) {
         <dt>Kind</dt><dd>{node.kind}</dd>
         <dt>Area</dt><dd>{fmtArea(area(node.geometry.footprint))}</dd>
         <dt>Height</dt><dd>{low}–{high === null ? 'open' : `${high} m`}</dd>
+        {node.data?.stats && node.data.stats.pondsPlaced < node.data.stats.pondsRequested && (
+          <><dt>Ponds placed</dt><dd>{node.data.stats.pondsPlaced} of {node.data.stats.pondsRequested}</dd></>
+        )}
         {inheritedKeys.map(k => (
           <Fragment key={k}><dt>{k}</dt><dd>{String(resolveAttr(path, k, {}))}</dd></Fragment>
         ))}

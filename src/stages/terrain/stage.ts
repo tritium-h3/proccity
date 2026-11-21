@@ -118,10 +118,13 @@ export const terrain: Stage = {
     const N = g.cols * g.rows;
 
     // Flat elevations: the first just above the waterline, later ones stepping inland and up.
+    // "Just above the waterline" only makes sense beside water; on a dry site every flat steps.
+    const wet = !!(layout.sea || layout.river);
     const elevations = layout.flats.map((_, n) => {
-      if (n === 0) return 3;
-      const step = 3 + (0.7 * s.relief - 3) * (n / Math.max(1, layout.flats.length - 1));
-      return round(step * (1 + (rng() - 0.5) * 0.2));
+      if (n === 0 && wet) return 3;
+      const lo = wet ? 3 : 0.2 * s.relief;
+      const t = wet ? n / Math.max(1, layout.flats.length - 1) : (n + 1) / layout.flats.length;
+      return round((lo + (0.7 * s.relief - lo) * t) * (1 + (rng() - 0.5) * 0.2));
     });
     // This stage's own overrides shape its output: apply elevation overrides before pinning.
     for (const o of overridesForStage) {
@@ -146,8 +149,15 @@ export const terrain: Stage = {
     // right beside the coast made a cliff where the shoreline meets a side edge.
     const fromSea = layout.sea ? distanceTo(g, seaM) : null;
     const edgeHeight = (k: number) => s.relief * (fromSea ? Math.max(0.1, smoothstep(0, 0.45 * size, fromSea[k])) : 1);
+    // Edge points near a flat or pond stay free, so the ground eases from the feature up to the
+    // edge; pinning them at full relief beside a low flat made a vertical wall.
+    const nearFeatureM = new Uint8Array(N);
+    for (const m of [...flatMs, ...pondMs]) m.forEach((v, k) => { if (v) nearFeatureM[k] = 1; });
+    const fromFlatOrPond = distanceTo(g, nearFeatureM);
+    const EDGE_CLEAR = 1.5 * FADE;
     const onEdge = (k: number) => {
       const i = k % g.cols, j = Math.floor(k / g.cols);
+      if (fromFlatOrPond[k] < EDGE_CLEAR) return false;
       return (edges.has('west') && i === 0) || (edges.has('east') && i === g.cols - 1)
         || (edges.has('north') && j === 0) || (edges.has('south') && j === g.rows - 1);
     };

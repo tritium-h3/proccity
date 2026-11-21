@@ -130,3 +130,27 @@ describe('terrain stage', () => {
     expect(r.overrides.length + r.dropped.length).toBe(1);
   });
 });
+
+describe('terrain has no vertical walls (found in the browser walk-through)', () => {
+  const maxJump = (h: Float32Array, n: number) => {
+    let m = 0;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      if (i < n - 1) m = Math.max(m, Math.abs(h[k + 1] - h[k]));
+      if (j < n - 1) m = Math.max(m, Math.abs(h[k + n] - h[k]));
+    }
+    return m;
+  };
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    it(`keeps neighbouring points within 60 m (no shore, no river, relief 400, seed ${seed})`, () => {
+      const r = run({ shore: 'none', river: false, relief: 400, ruggedness: 1 }, seed);
+      const j = maxJump(r.h, r.hf.cols);
+      if (j >= 60) console.log(`seed ${seed}: max jump ${j.toFixed(1)} m`);
+      expect(j).toBeLessThan(60);
+    });
+  }
+  it('starts the first flat above the waterline only when there is water', () => {
+    const dry = run({ shore: 'none', river: false, relief: 400 }, 1);
+    expect(dry.children.find(c => c.name === 'flat:0')!.attrs.elevation).toBeGreaterThan(3);
+  });
+});
