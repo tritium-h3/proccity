@@ -31,8 +31,9 @@ oxlint, `clipper2-js` (polygon booleans and offsets), `idb` (IndexedDB), `fake-i
 - IndexedDB database `proccity`, stores `cities` (key `id`) and `index`; last-opened city
   id in `localStorage['proccity:lastCity']`.
 - Loading a saved city displays its stored tree and does **not** regenerate.
-- **No git operations.** The repo isn't under version control and the owner handles source
-  control, so tasks end with a verification checkpoint instead of a commit.
+- **Git:** work on branch `foundation` (from `main`). Every task's final checkpoint step
+  ends with a commit of that task's files: conventional message (`feat(grammar): …`) plus
+  the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. No pushing.
 - Docs ride along: update `CLAUDE.md`/`README.md` in the task that makes them wrong.
 - Checks every task must leave green: `npm test`, `npm run typecheck`, `npm run lint`.
 

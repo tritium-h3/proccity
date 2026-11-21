@@ -39,6 +39,9 @@ Conventions follow `~/.claude/CLAUDE.md`; this file covers what's specific here.
 
 ## Dev
 
+**Git:** agents manage the repo. Feature work goes on a branch with a commit per task;
+`main` takes merged work. Pushing to GitHub needs the owner's OK.
+
 Runs as the systemd user service **`proccity`** (Vite + API via `concurrently`):
 - Vite (HTTPS) **5281**, API **5282**, HTTP→HTTPS redirect **5280**.
 - `npm run dev:restart`, `systemctl --user status proccity`, `journalctl --user -u proccity -f`
