@@ -142,6 +142,10 @@ export const terrain: Stage = {
     const fromLand = distanceTo(g, landM);
 
     const edges = inlandEdges(s.shore, layout.river?.course.at(-1), half);
+    // Inland edges rise to full relief only away from the sea: pinning them at full height
+    // right beside the coast made a cliff where the shoreline meets a side edge.
+    const fromSea = layout.sea ? distanceTo(g, seaM) : null;
+    const edgeHeight = (k: number) => s.relief * (fromSea ? Math.max(0.1, smoothstep(0, 0.45 * size, fromSea[k])) : 1);
     const onEdge = (k: number) => {
       const i = k % g.cols, j = Math.floor(k / g.cols);
       return (edges.has('west') && i === 0) || (edges.has('east') && i === g.cols - 1)
@@ -152,7 +156,7 @@ export const terrain: Stage = {
       const pinned = new Uint8Array(N), values = new Float32Array(N);
       for (let k = 0; k < N; k++) {
         if (seaM[k]) { pinned[k] = 1; values[k] = -SEA_DEPTH * Math.min(1, fromLand[k] / (0.15 * size)); }
-        else if (onEdge(k)) { pinned[k] = 1; values[k] = s.relief; }
+        else if (onEdge(k)) { pinned[k] = 1; values[k] = edgeHeight(k); }
       }
       flatMs.forEach((m, n) => m.forEach((v, k) => { if (v) { pinned[k] = 1; values[k] = elevations[n]; } }));
       return { pinned, values };

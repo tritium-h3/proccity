@@ -4,7 +4,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Point2 } from '../doc/types.js';
-import { buildView, outline, type BuiltView, type ViewState } from './view.js';
+import { buildView, groundHeightAt, outline, type BuiltView, type ViewState } from './view.js';
 
 export type Backend = 'WebGPU' | 'WebGL 2';
 export type { ViewState } from './view.js';
@@ -65,7 +65,7 @@ export function createCityScene(container: HTMLElement): CityScene {
     g.traverse(o => { if (o instanceof THREE.Line) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); } });
   };
 
-  function fitToSite(size: number) {
+  function fitToSite(size: number, centreHeight: number) {
     if (size === siteSize) return;
     siteSize = size;
     const half = size / 2;
@@ -78,8 +78,8 @@ export function createCityScene(container: HTMLElement): CityScene {
     (scene.fog as THREE.Fog).near = size * 1.25;
     (scene.fog as THREE.Fog).far = size * 3.5;
     // Frame the whole site from the default three-quarter view.
-    camera.position.set(size * 1.05, size * 0.85, size * 1.05);
-    controls.target.set(0, 0, 0);
+    camera.position.set(size * 1.05, centreHeight + size * 0.85, size * 1.05);
+    controls.target.set(0, centreHeight, 0);
   }
 
   function setView(v: ViewState) {
@@ -88,7 +88,7 @@ export function createCityScene(container: HTMLElement): CityScene {
     built = buildView(v);
     scene.add(built.group);
     const b = v.tree.geometry.footprint[0]?.[0];
-    if (b) fitToSite(Math.max(...b.map(p => Math.abs(p[0]))) * 2);
+    if (b) fitToSite(Math.max(...b.map(p => Math.abs(p[0]))) * 2, groundHeightAt(v.tree, 0, 0));
     clearOutline(selection);
     selection = v.selectedId ? outline(v.tree, v.selectedId, SELECT, 1) : null;
     if (selection) scene.add(selection);
@@ -111,7 +111,9 @@ export function createCityScene(container: HTMLElement): CityScene {
     const h = ordered[0];
     if (!h || h.faceIndex == null) return null;
     const p = built.pickables.find(pk => pk.mesh === h.object)!;
-    return { nodeId: p.nodeIdForFace(h.faceIndex), point: [h.point.x, h.point.z] };
+    const point: Point2 = [h.point.x, h.point.z];
+    const nodeId = p.nodeIdAt ? p.nodeIdAt(point) : p.nodeIdForFace?.(h.faceIndex) ?? null;
+    return nodeId ? { nodeId, point } : null;
   }
 
   const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
