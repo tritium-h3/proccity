@@ -174,3 +174,52 @@ describe('no micro-cliffs from near-duplicate vertices (found in the browser)', 
     });
   }
 });
+
+describe('terrain v2 review fixes', () => {
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    it(`never perches the river above the land beside it (seed ${seed})`, () => {
+      const r = run({}, seed);
+      const river = r.children.find(c => c.kind === 'river');
+      if (!river) return;
+      // Two tiers: at the bank (5 m) land is never below the water; within 50 m nothing sits
+      // more than 2 m below it (a levee was ~40 m). The nearest-course-point surface is only a
+      // proxy away from the bank: near a bend it can be the upstream, higher reach.
+      const bank = offsetPolygons(river.geometry.footprint, 5);
+      const near = offsetPolygons(river.geometry.footprint, 50);
+      let worstBank = 0, worstNear = 0;
+      for (const c of r.children.filter(c => !WATER.has(c.kind))) {
+        for (const p of c.data!.ground!.points) {
+          if (!containsPoint(near, [p[0], p[1]])) continue;
+          const below = riverSurfaceAt(river.data!.course!, river.data!.profile!, [p[0], p[1]]) - p[2];
+          worstNear = Math.max(worstNear, below);
+          if (containsPoint(bank, [p[0], p[1]])) worstBank = Math.max(worstBank, below);
+        }
+      }
+      expect(worstBank).toBeLessThan(0.01);
+      expect(worstNear).toBeLessThan(2);
+    });
+  }
+
+  it('drops a river-flat elevation override below the river, leaving the flat level', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      const base = run({}, seed);
+      const rf = base.children.find(c => c.kind === 'flat' && c.attrs.riverFlat && (c.attrs.minElevation as number) > 5);
+      if (!rf) continue;
+      const pts = rf.data!.ground!.points;
+      const inner = pts.reduce((a, b) => (b[2] > a[2] ? b : a));
+      const doc: CityDoc = {
+        ...createCityDoc({ name: 'T', seed: 1, now: 'n', id: 'c', stages: [{ id: 'terrain', defaults: defaultsFor(terrain.settings) }] }),
+        generatedThrough: 0,
+        overrides: [{ id: 'o', stage: 'terrain', kind: 'flat', anchor: [inner[0], inner[1]], settings: { elevation: 1 }, createdAt: 't' }],
+      };
+      // run through the pipeline with the same stage seed as `base`
+      const g = generate({ doc: { ...doc, seed: 0, stages: [{ ...doc.stages[0] }] }, fromStage: 0, stages: [{ ...terrain, run: input => terrain.run({ ...input, rng: createRng(seed) }) }] });
+      expect(g.dropped.map(d => d.reason)).toEqual(['invalid-setting']);
+      expect(g.dropped[0].detail).toMatch(/minimum/);
+      const f = g.tree.children.find(c => c.name === rf.name)!;
+      expect(f.attrs.elevation).toBe(rf.attrs.elevation);
+      return;
+    }
+    throw new Error('no river flat with a raised minimum in seeds 1–6');
+  });
+});

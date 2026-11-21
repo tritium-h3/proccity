@@ -42,4 +42,7 @@ export interface Stage {
   /** node kind → local settings it accepts as overrides */
   overridable?: Record<string, SettingsSchema>;
   run(input: StageInput): StageOutput;
+  /** Per-region override check beyond the schema (e.g. a flat can't go below the river beside
+   *  it). Returns a reason fragment if the value is invalid there; null if fine. */
+  validateOverride?(node: RegionNode, key: string, value: SettingValue): string | null;
 }

@@ -115,7 +115,9 @@ Deleted as unused (simplify):
   the far edge), with a fixed moderate meander. It stays out of the sea until the mouth,
   only its largest piece is kept, and its width is `riverWidth`.
 - **Surface profile:** descends from about `0.3 × relief` at the source to 0 at a coastal
-  mouth. It's monotonic, smoothed and stored per course point as `data.profile`. Banks are
+  mouth. After classification, it's capped 0.5 m below any sea-touching cell (shore band,
+  0.5 m) or coastal flat it passes, then eased back upstream at no more than a 2 % grade, so
+  the lower river meets the coastal plain instead of perching above it. It's monotonic, smoothed and stored per course point as `data.profile`. Banks are
   then built *up* from the river (step 4), so the water can't sit above them.
 - v1's flats and ponds placement goes away. Flats and ponds now come from cells.
 
@@ -174,6 +176,10 @@ All absolute metres. Processed in this order:
 - **Coastal flats:** 2 m plus 1 m per hop.
 - **Shelves:** one level per merged shelf region, the mean of its cells' base elevations
   (below), rounded to whole metres.
+- **River-aware floor:** any cell touching the river, or nearest to it, has a base of at
+  least 0.5 m above the highest river surface at its corners, plus 1 m per hop. Land beside
+  the upper river rises from the river, not from sea level. *(Changed after review: slopes
+  beside the upper river sat about 40 m below it, a levee.)*
 - **Base elevation for every non-flat cell:** `relief × smoothstep(0, maxHop, hop)`, plus
   per-cell noise of ± `0.15 × hl × relief`. Hills cells add a centre bump
   (`+0.1 × hl × relief`) at their centre point only, which gives rounded summits.
@@ -227,7 +233,11 @@ classification, not a steepness cut).
 
 **Overrides:** `flat` regions accept `elevation` (1–400 m, whole metres). Applied before
 vertex elevations via `overridesForStage`, matched by anchor, as in v1. A river flat with an
-override becomes level at that elevation.
+override becomes level at that elevation. A flat beside the river has a minimum
+(`minElevation`: 0.5 m above the highest river surface at its corners). An override below
+it is invalid there: the stage ignores it, and resolution drops it with the standard toast
+naming the minimum. This uses the stage's optional `validateOverride(node, key, value)`.
+*(Changed after review: applying it made a 40 m wall at the bank.)*
 
 ## Rendering (`src/scene/renderers/terrain.ts`, rewritten)
 
@@ -237,7 +247,8 @@ override becomes level at that elevation.
   - **Colour:** a base colour by kind (v1's palette). Region edges blend with world-space
     noise, so boundaries look ragged rather than straight.
   - **Micro-relief:** noise-based normal perturbation (bump) for small-scale texture, plus
-    vertex displacement of at most ±2 m.
+    vertex displacement of at most ±1.5 m, and none on vertices shared with water, so banks
+    never sink below the water.
   - **Shore:** a wet-sand band near sea level (elevation below 1.5 m, with a noisy
     threshold), so the coastline reads as ragged even though the polygons are simple.
 - **Water:** sea plane, river ribbon (surface per vertex from `profile`) and pond planes, in

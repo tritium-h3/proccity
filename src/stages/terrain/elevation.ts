@@ -37,9 +37,14 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
   overrides: { group: number; elevation: number }[];
 }, rng: () => number): Levels {
   const maxHop = Math.max(1, ...cells.map(cell => cell.hop));
-  const base = cells.map(cell =>
-    Math.max(1, o.relief * smoothstep(0, maxHop, cell.hop) + (rng() - 0.5) * 2 * 0.15 * o.hilliness * o.relief));
   const surfaceAt = (p: Point2) => (o.course && o.profile ? riverSurfaceAt(o.course, o.profile, p) : 0);
+  // Land beside the river is built up from the river, not from sea level: a slope or hill
+  // cell along the upper river otherwise sat tens of metres below it (a levee carrying the
+  // water). Floor: half a metre above the highest river surface at any of its corners.
+  const riverFloor = (cell: Cell) => (o.course && (cell.touchesRiver || cell.nearest === 'river')
+    ? Math.max(...cell.poly[0].map(surfaceAt)) + 0.5 + cell.hop : 0);
+  const base = cells.map(cell => Math.max(1, riverFloor(cell),
+    o.relief * smoothstep(0, maxHop, cell.hop) + (rng() - 0.5) * 2 * 0.15 * o.hilliness * o.relief));
 
   // Flat levels.
   const groupOf = new Int32Array(cells.length);

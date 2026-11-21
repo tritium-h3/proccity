@@ -13,6 +13,7 @@ import {
 import type { Point2, RegionNode } from '../../doc/types.js';
 import { containsPoint } from '../../grammar/polygon.js';
 import { riverSurfaceAt } from '../../stages/terrain/elevation.js';
+import { flatSurface } from '../../stages/terrain/ground.js';
 import type { PickableMesh, StageRenderer } from './index.js';
 
 const WATER_KINDS = new Set(['sea', 'river', 'pond']);
@@ -53,7 +54,10 @@ function groundMaterial(): THREE.MeshStandardNodeMaterial {
 
   // Micro-relief: bump from fine noise, and a little real displacement (≤ ±1.5 m).
   m.normalNode = bumpMap(n(0.25, 3).add(n(0.9, 11).mul(0.3)), float(0.6));
-  m.positionNode = positionLocal.add(vec3(0, mx_noise_float(vec3(positionLocal.x.mul(0.03), 0, positionLocal.z.mul(0.03))).mul(1.5), 0));
+  // No displacement where land meets water (the bed weight is above 0 exactly on vertices
+  // shared with a water region): ±1.5 m exceeded the 0.5 m bank freeboard and sank banks.
+  const dry = float(1).sub(w.w.mul(20).clamp(0, 1));
+  m.positionNode = positionLocal.add(vec3(0, mx_noise_float(vec3(positionLocal.x.mul(0.03), 0, positionLocal.z.mul(0.03))).mul(1.5).mul(dry), 0));
   return m;
 }
 
@@ -67,7 +71,9 @@ function waterMaterial(hex: number): THREE.MeshStandardNodeMaterial {
 export const renderTerrain: StageRenderer = nodes => {
   const t0 = performance.now();
   const group = new THREE.Group();
-  const withGround = nodes.filter(n => n.data?.ground);
+  // Old v1 cities have no ground data: draw their regions flat at 0 so they still show.
+  const groundOf = new Map(nodes.map(n => [n, n.data?.ground ?? flatSurface(n.geometry.footprint)]));
+  const withGround = nodes;
   if (!withGround.length) return { object: group, pickables: [] };
 
   // Ground: every region's triangles in one mesh, vertices shared by key so normals and the
@@ -77,7 +83,7 @@ export const renderTerrain: StageRenderer = nodes => {
   const tris: number[] = [];
   for (const n of withGround) {
     const ch = CHANNEL[n.kind] ?? 1;
-    const g = n.data!.ground!;
+    const g = groundOf.get(n)!;
     const local = g.points.map(([x, z, y]) => {
       const k = vkey(x, z);
       let i = index.get(k);
@@ -116,7 +122,7 @@ export const renderTerrain: StageRenderer = nodes => {
   for (const n of withGround.filter(nn => WATER_KINDS.has(nn.kind))) {
     const surface = waterSurfaceAt(n);
     if (!surface) continue;
-    const g = n.data!.ground!;
+    const g = groundOf.get(n)!;
     const wp: number[] = [];
     for (const [a, b, c] of g.triangles) {
       const [ax, az] = g.points[a], [bx, bz] = g.points[b], [cx, cz] = g.points[c];

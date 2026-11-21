@@ -36,6 +36,11 @@ export function resolveOverrides(stage: Stage, created: RegionNode[], overrides:
       dropped.push({ override: o, reason: 'invalid-setting', detail: `${bad[0]}: ${bad[1]}` });
       continue;
     }
+    const regional = Object.entries(o.settings).map(([k, v]) => stage.validateOverride?.(node, k, v) ?? null).find(r => r);
+    if (regional) {
+      dropped.push({ override: o, reason: 'invalid-setting', detail: regional });
+      continue;
+    }
     landed.set(node.id, [...(landed.get(node.id) ?? []), o]);
   }
 

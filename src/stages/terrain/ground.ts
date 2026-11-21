@@ -84,3 +84,8 @@ function distanceToBoundary(mp: MultiPolygon, p: Point2): number {
   }
   return best;
 }
+
+/** A flat (height 0) surface for a footprint: old v1 cities have no ground data. */
+export function flatSurface(footprint: MultiPolygon): GroundSurface {
+  return constrainedSurface(footprint, () => 0, []);
+}

@@ -4,7 +4,7 @@
 // detail is cosmetic and lives in the renderer's shader.
 
 import { childId } from '../../doc/tree.js';
-import type { GroundSurface, MultiPolygon, Point2, RegionNode, Settings } from '../../doc/types.js';
+import type { GroundSurface, MultiPolygon, Point2, Polygon, RegionNode, Settings } from '../../doc/types.js';
 import { difference, union } from '../../grammar/clipper.js';
 import { area, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
@@ -23,6 +23,18 @@ function distToLine(p: Point2, line: Point2[]): number {
   let best = Infinity;
   for (let i = 0; i + 1 < line.length; i++) {
     const [ax, az] = line[i], [bx, bz] = line[i + 1];
+    const dx = bx - ax, dz = bz - az;
+    const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - az) * dz) / (dx * dx + dz * dz || 1)));
+    best = Math.min(best, Math.hypot(p[0] - (ax + dx * t), p[1] - (az + dz * t)));
+  }
+  return best;
+}
+
+function distanceToPolygon(poly: Polygon, p: Point2): number {
+  if (containsPoint([poly], p)) return 0;
+  let best = Infinity;
+  for (const ring of poly) for (let i = 0; i < ring.length; i++) {
+    const [ax, az] = ring[i], [bx, bz] = ring[(i + 1) % ring.length];
     const dx = bx - ax, dz = bz - az;
     const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - az) * dz) / (dx * dx + dz * dz || 1)));
     best = Math.min(best, Math.hypot(p[0] - (ax + dx * t), p[1] - (az + dz * t)));
@@ -67,6 +79,12 @@ export const terrain: Stage = {
     flat: [{ key: 'elevation', label: 'Elevation', type: 'number', min: 1, max: 400, step: 1, default: 3, unit: 'm' }],
   },
 
+  validateOverride(node, key, value) {
+    if (node.kind !== 'flat' || key !== 'elevation' || typeof value !== 'number') return null;
+    const min = Number(node.attrs.minElevation ?? 1);
+    return value < min ? `elevation: ${value} (the minimum here is ${min} m, beside the river)` : null;
+  },
+
   run({ leaves, settings, rng, overridesForStage }) {
     const site = leaves.find(l => l.kind === 'site');
     if (!site) return { children: new Map() };
@@ -79,7 +97,7 @@ export const terrain: Stage = {
     // 1. Water carves the site.
     const water = layoutWater({ size, rng, shore: s.shore, river: s.river, riverWidth: s.riverWidth });
     const course = water.river?.course ?? null;
-    const profile = course ? riverProfile(course, s.relief, !!water.sea) : null;
+    let profile = course ? riverProfile(course, s.relief, !!water.sea) : null;
     const land = difference(footprint, union(water.sea ?? [], water.river?.polygon ?? []));
 
     // 2–3. Cells, classification, regions.
@@ -87,13 +105,42 @@ export const terrain: Stage = {
     const classified = classify(cells, { flatWidth: s.flatWidth, hilliness: s.hilliness, ponds: s.ponds }, rng);
     const groups = mergeRegions(cells, classified);
 
-    // This stage's own overrides shape its output: flat elevation, matched by anchor.
+    // Near the coast the land's level is fixed (coastal flats at 2 m + 1 per hop, the shore
+    // band at 0.5 m), so the river must come down to meet it: cap the surface 0.5 m below any
+    // such cell it passes, then ease back upstream at no more than a 2 % grade. Lowering
+    // water is always safe; a straight descent left the lower river perched above the
+    // coastal plain.
+    if (course && profile && water.sea) {
+      const reach = s.riverWidth / 2 + 55;
+      const fixed = cells.flatMap((cell, i) =>
+        // A sea-touching cell's shore band sits at 0.5 m whatever its kind, so that wins.
+        cell.touchesSea ? [{ cell, level: 0.5 }] : classified.flatType[i] === 'coastal' ? [{ cell, level: 2 + cell.hop }] : []);
+      const capped = profile.map((v, k) => {
+        let cap = v;
+        for (const f of fixed) if (distanceToPolygon(f.cell.poly, course[k]) <= reach) cap = Math.min(cap, f.level - 0.5);
+        return Math.max(0, cap);
+      });
+      for (let k = capped.length - 2; k >= 0; k--) {
+        const seg = Math.hypot(course[k + 1][0] - course[k][0], course[k + 1][1] - course[k][1]);
+        capped[k] = Math.min(capped[k], capped[k + 1] + 0.02 * seg);
+      }
+      profile = capped.map(v => Math.round(v * 100) / 100);
+    }
+
+    // A river flat can't sit below the river beside it: its lowest legal level is half a metre
+    // above the highest river surface at any of its cells' corners.
+    const minLevel = groups.map(g => (g.kind === 'flat' && course && profile && g.cells.some(ci => cells[ci].touchesRiver || cells[ci].nearest === 'river')
+      ? Math.ceil(Math.max(...g.cells.flatMap(ci => cells[ci].poly[0].map(p => riverSurfaceAt(course, profile, p)))) + 0.5)
+      : 1));
+
+    // This stage's own overrides shape its output: flat elevation, matched by anchor. One
+    // below the flat's minimum is ignored here and dropped (with a toast) by resolution.
     const overrides: { group: number; elevation: number }[] = [];
     for (const o of overridesForStage) {
       const e = o.settings.elevation;
       if (o.kind !== 'flat' || typeof e !== 'number') continue;
       const gi = groups.findIndex(g => g.kind === 'flat' && g.cells.some(ci => containsPoint([cells[ci].poly], o.anchor)));
-      if (gi >= 0) overrides.push({ group: gi, elevation: Math.max(1, Math.round(e)) });
+      if (gi >= 0 && e >= minLevel[gi]) overrides.push({ group: gi, elevation: Math.max(1, Math.round(e)) });
     }
 
     // 4. Elevations.
@@ -125,7 +172,7 @@ export const terrain: Stage = {
     }
 
     const counters = { flat: 0, slope: 0, hills: 0, pond: 0 };
-    for (const g of groups) {
+    for (const [gi, g] of groups.entries()) {
       const polys = g.cells.map(ci => cells[ci].poly);
       const fp = polys.length === 1 ? [polys[0]] : union(polys, []);
       const interior: [number, number, number][] = [];
@@ -147,6 +194,7 @@ export const terrain: Stage = {
         const lv = g.cells.map(ci => levels.flatLevel[ci]!);
         out.push(node(name, 'flat', fp, {
           elevation: Math.round(lv.reduce((a, b) => a + b, 0) / lv.length),
+          minElevation: minLevel[gi],
           coastal: g.flatType === 'coastal', riverFlat: g.flatType === 'river',
         }, { ground }));
       } else {

@@ -94,3 +94,14 @@ describe('constrainedSurface', () => {
     }
   });
 });
+
+import { flatSurface } from './ground.js';
+
+describe('flatSurface (old v1 cities)', () => {
+  it('covers a footprint at height 0', () => {
+    const fp: MultiPolygon = [[[[0, 0], [10, 0], [10, 10], [0, 10]]]];
+    const g = flatSurface(fp);
+    expect(triangleArea(g)).toBeCloseTo(100);
+    expect(g.points.every(p => p[2] === 0)).toBe(true);
+  });
+});
