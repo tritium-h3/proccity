@@ -72,7 +72,8 @@ export function slabMesh(
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   geometry.computeVertexNormals();
   const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 }));
-  mesh.castShadow = true;
+  // Flat footprints have nothing to cast; only extruded regions cast shadows.
+  mesh.castShadow = nodes.some(n => n.geometry.height.high !== null);
   mesh.receiveShadow = true;
 
   return {

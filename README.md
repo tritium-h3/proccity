@@ -3,8 +3,11 @@
 Procedural cities, rendered in 3D in the browser with Three.js (WebGPU, falling back to
 WebGL 2).
 
-Current state: a proof of concept. A street grid of blocks with box buildings that rise
-towards a downtown, orbit camera, sun with shadows, and a **New city** button.
+Cities are generated in stages by a shape grammar: each stage divides the regions the
+previous stage produced. The current state is the **foundation**: the city document,
+stage pipeline (in a Web Worker), local overrides, undo/redo, browser storage
+(IndexedDB, plus JSON download/open) and the editor. Two throwaway debug stages exercise it
+until the real stages (terrain, districts, roads, …) are built.
 
 ```bash
 npm install

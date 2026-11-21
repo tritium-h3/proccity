@@ -35,7 +35,7 @@ export function createCityScene(container: HTMLElement): CityScene {
   scene.background = new THREE.Color(SKY);
   scene.fog = new THREE.Fog(SKY, 2500, 7000);
 
-  const camera = new THREE.PerspectiveCamera(45, 1, 1, 20000);
+  const camera = new THREE.PerspectiveCamera(45, 1, 2, 20000);
   camera.position.set(1400, 1100, 1400);
 
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -62,7 +62,7 @@ export function createCityScene(container: HTMLElement): CityScene {
   const clearOutline = (g: THREE.Group | null) => {
     if (!g) return;
     scene.remove(g);
-    g.traverse(o => { if (o instanceof THREE.LineLoop) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); } });
+    g.traverse(o => { if (o instanceof THREE.Line) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); } });
   };
 
   function fitToSite(size: number) {
@@ -77,6 +77,9 @@ export function createCityScene(container: HTMLElement): CityScene {
     cam.updateProjectionMatrix();
     (scene.fog as THREE.Fog).near = size * 1.25;
     (scene.fog as THREE.Fog).far = size * 3.5;
+    // Frame the whole site from the default three-quarter view.
+    camera.position.set(size * 1.05, size * 0.85, size * 1.05);
+    controls.target.set(0, 0, 0);
   }
 
   function setView(v: ViewState) {

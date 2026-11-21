@@ -3,21 +3,51 @@
 A standalone project (own repo, own service, own ports) linked from the `pages` gallery.
 Conventions follow `~/.claude/CLAUDE.md`; this file covers what's specific here.
 
-## Architecture
+## What it is
 
-- **`src/city/`: generation, pure TypeScript, no Three.js.** `generateCity(options)`
-  returns plain data (`City` → `blocks`, `buildings`) in metres, centred on the origin,
-  Y up. It takes a seed so tests can reproduce output. Tested with Vitest
-  (`generate.test.ts`).
-- **`src/scene/`: rendering.** `cityScene.ts` owns renderer, camera, lights, controls and
-  the animation loop; `cityMeshes.ts` turns `City` data into meshes. Buildings are one
-  `InstancedMesh` (one draw call for the whole skyline), each instance a scaled unit
-  cube with its base at y=0.
-- **`src/App.tsx`: React only for the UI around the canvas.** It creates the scene once
-  in an effect (StrictMode-safe: `dispose()` on cleanup) and pushes new cities into it.
-- **`src/server.ts`: placeholder Express backend** (`/api/health` only). Generation is
-  client-side; the backend exists so saved/shared cities have a home later.
-- `src/config.ts`: hostnames and ports, shared by Vite and the server.
+A **shape grammar** for cities, built in stages (terrain → districts → arterials → blocks →
+lots → lot sections → building parts). Each stage **divides** the regions the previous one
+produced, never adds. The design is `docs/superpowers/specs/2026-11-20-foundation-design.md`.
+Only the foundation exists so far, exercised by two **throwaway** debug stages
+(`debug-grid`, `debug-split`), to be deleted when terrain and districts land. Real stages
+are designed with the owner one at a time.
+
+## Architecture (`src/`)
+
+- **`doc/`: the city document.** `CityDoc` (format `'proccity/1'`) holds a tree of
+  `RegionNode`s with **resolved geometry**, so a saved city never needs the generator to
+  be reproduced. Every region is a **slab**: a footprint multipolygon plus a height range in
+  metres *above ground* (`high: null` = open to the sky). Node ids are paths
+  (`site/cell:3-3`). `validate.ts` refuses anything not `proccity/1`.
+- **`grammar/`: pure geometry.** `split` (along x, z or y; sizes in metres or `'1r'`
+  weights), `cut`, `inset`, `band`, plus polygon helpers. `clipper.ts` is the **only** file
+  importing the polygon library (`clipper2-ts`; `clipper2-js` was tried and is broken,
+  see its header). `checkPartition` enforces the **subtractive invariant**: children
+  partition their parent volume, checked band by band in height. The worker runs it in
+  dev builds and logs violations.
+- **`stages/`: the stage contract** (`types.ts`). A stage declares a settings schema (the
+  editor builds UI from it) and optional per-kind `overridable` local settings, and its
+  `run()` attaches children to leaves. Stages are pure: no DOM, no Three.js. Attributes
+  inherit down the tree through `resolveAttr` (own > ancestors > stage setting).
+  **Adding a stage:** a module, a line in `stages/index.ts`, and a renderer in
+  `scene/renderers/`.
+- **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
+  `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
+  so regenerating stage k never disturbs earlier stages and undo is exact.
+  `overrides.ts` re-attaches each override to the region under its anchor point, or drops
+  it with a toast message. Generation runs in a **Web Worker** (`worker.ts`/`client.ts`),
+  with latest-wins tickets so stale results are never applied.
+- **`editor/`:** `history.ts` (undo/redo of the editable state; `regenerateFrom` picks the
+  earliest changed stage) and `useCityEditor.ts` (all editor state and actions).
+  Components: Toolbar, StagePanel, Inspector, Toasts.
+- **`storage/`:** IndexedDB (`proccity` db), debounced autosave, JSON download/open.
+  **Loading a saved city shows its stored tree and does not regenerate.**
+- **`scene/`:** `cityScene.ts` (renderer, camera, controls, picking, outlines), `view.ts`
+  (shows the site plus the current stage's regions), `slabMesh.ts` (merged mesh with a
+  face → node lookup). Stage renderers live in `scene/renderers/`, **not on the stage**,
+  so the worker never bundles Three.js. The current stage's regions cover the site
+  completely, so the site ground isn't drawn under them; drawing both z-fights.
+- `server.ts`: placeholder Express backend (`/api/health`). `config.ts`: hosts and ports.
 
 ## Three.js notes
 
@@ -26,6 +56,7 @@ Conventions follow `~/.claude/CLAUDE.md`; this file covers what's specific here.
   addons (`three/addons/...`) share the same copy. The UI shows which backend is active.
 - Three changes API between releases. Check the installed source in `node_modules/three`
   before relying on memory (e.g. `PCFSoftShadowMap` was removed in r186).
+- `WebGPURenderer` doesn't support `LineLoop`. Use a `Line` with the first point repeated.
 - **A blank canvas with "WebGPU" in the panel means the GPU device was lost.** Seen
   2026-11-20 on the owner's laptop (Chrome/Linux, hybrid NVIDIA 3050 Ti, experimental
   WebGPU flags on): `VK_ERROR_OUT_OF_DEVICE_MEMORY` even for a raw WebGPU clear with no
@@ -35,7 +66,9 @@ Conventions follow `~/.claude/CLAUDE.md`; this file covers what's specific here.
   --enable-features=Vulkan` gives a SwiftShader WebGPU adapter whose device is lost
   immediately, even for raw WebGPU, so it **can't test WebGPU rendering**.
   `--virtual-time-budget` stalls async GPU init, so drive Chrome in real time over CDP
-  (`--remote-debugging-port`) when you need console output from GPU code.
+  (`--remote-debugging-port`) when you need console output from GPU code, or to click
+  through the editor (React range inputs need the native value setter plus `input`/`change`
+  events). Use a persistent `--user-data-dir` to test IndexedDB across reloads.
 
 ## Dev
 

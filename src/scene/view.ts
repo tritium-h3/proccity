@@ -34,16 +34,19 @@ export function buildView(v: ViewState): BuiltView {
     pickables.push(...r.pickables);
   };
 
-  add('site', [v.tree], v.currentStage < 0);
+  // The current stage's regions partition the site, so they cover it completely:
+  // drawing the site ground underneath as well only z-fights with them.
   const current = v.stages[v.currentStage];
-  if (current && v.currentStage <= v.generatedThrough) add(current.id, nodesOfStage(v.tree, current.id), true);
+  const currentNodes = current && v.currentStage <= v.generatedThrough ? nodesOfStage(v.tree, current.id) : [];
+  if (currentNodes.length) add(current.id, currentNodes, true);
+  else add('site', [v.tree], true);
 
   return {
     group,
     pickables,
     dispose() {
       group.traverse(o => {
-        if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments || o instanceof THREE.LineLoop) {
+        if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
           o.geometry.dispose();
           (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
         }
@@ -60,8 +63,10 @@ export function outline(tree: RegionNode, id: string, colour: number, opacity: n
   const group = new THREE.Group();
   for (const [outer] of node.geometry.footprint) {
     if (!outer) continue;
-    const g = new THREE.BufferGeometry().setFromPoints(outer.map(([x, z]) => new THREE.Vector3(x, y, z)));
-    group.add(new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: colour, transparent: opacity < 1, opacity })));
+    // A closed Line, not LineLoop: WebGPURenderer doesn't support LineLoop.
+    const pts = [...outer, outer[0]].map(([x, z]) => new THREE.Vector3(x, y, z));
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    group.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: colour, transparent: opacity < 1, opacity })));
   }
   return group;
 }
