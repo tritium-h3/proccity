@@ -30,9 +30,18 @@ export interface Heightfield {
   heights: string;
 }
 
+/** A region's own triangulated ground: absolute elevations (m above sea level). The
+ *  triangles exactly cover the region's footprint in plan view. */
+export interface GroundSurface {
+  points: [number, number, number][];      // x, z, elevation
+  triangles: [number, number, number][];   // indices into points
+}
+
 /** Bulky per-region data a stage may attach (to its own regions, or to existing ones). */
 export interface RegionData {
+  /** v1 terrain only (dense height grid); kept so old saves still validate */
   heightfield?: Heightfield;
+  ground?: GroundSurface;
   /** a centreline, e.g. a river's course from source to mouth */
   course?: Point2[];
   /** a value per course point, e.g. the river's surface elevation (m above sea level) */

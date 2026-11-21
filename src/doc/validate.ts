@@ -62,6 +62,17 @@ function checkNode(v: unknown, path: string) {
       if (!Array.isArray(v.data.course)) fail(`${path}.data.course`, 'should be an array of points');
       v.data.course.forEach((p: unknown, i: number) => checkPoint(p, `${path}.data.course[${i}]`));
     }
+    if (v.data.ground !== undefined) {
+      const gr = v.data.ground, at = `${path}.data.ground`;
+      if (!isObj(gr) || !Array.isArray(gr.points) || !Array.isArray(gr.triangles)) fail(at, 'should be { points, triangles }');
+      const n = gr.points.length;
+      gr.points.forEach((p: unknown, i: number) => {
+        if (!Array.isArray(p) || p.length !== 3 || !p.every(x => typeof x === 'number' && Number.isFinite(x))) fail(`${at}.points[${i}]`, 'should be [x, z, elevation]');
+      });
+      gr.triangles.forEach((t: unknown, i: number) => {
+        if (!Array.isArray(t) || t.length !== 3 || !t.every(x => Number.isInteger(x) && x >= 0 && x < n)) fail(`${at}.triangles[${i}]`, `should be three point indices below ${n}`);
+      });
+    }
     if (v.data.profile !== undefined) {
       if (!Array.isArray(v.data.profile) || !v.data.profile.every((x: unknown) => typeof x === 'number')) fail(`${path}.data.profile`, 'should be an array of numbers');
     }

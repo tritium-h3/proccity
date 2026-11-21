@@ -62,3 +62,16 @@ describe('parseCityDoc height maps', () => {
     expect(() => parseCityDoc(d)).toThrow(/heightfield/);
   });
 });
+
+describe('parseCityDoc ground surfaces', () => {
+  it('accepts a valid ground surface', () => {
+    const d = doc();
+    d.tree.data = { ground: { points: [[0, 0, 1], [1, 0, 2], [0, 1, 3]], triangles: [[0, 1, 2]] } };
+    expect(parseCityDoc(JSON.parse(JSON.stringify(d))).tree.data?.ground?.triangles).toHaveLength(1);
+  });
+  it('rejects a triangle index out of range', () => {
+    const d = doc();
+    d.tree.data = { ground: { points: [[0, 0, 1]], triangles: [[0, 1, 2]] } };
+    expect(() => parseCityDoc(d)).toThrow(/ground/);
+  });
+});
