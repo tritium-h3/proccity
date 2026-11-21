@@ -47,18 +47,17 @@ describe('createCityDoc', () => {
   });
 });
 
-import { encodeHeights, makeHeightfield } from './heightfield.js';
 
 describe('parseCityDoc height maps', () => {
   it('accepts a valid height map on a region', () => {
     const d = doc();
-    d.tree.data = { heightfield: makeHeightfield([-1000, -1000], 8, 2, 2, new Float32Array([1, 2, 3, 4])) };
+    d.tree.data = { heightfield: { origin: [-1000, -1000], cell: 8, cols: 2, rows: 2, heights: 'AACAPwAAAEAAAEBAAACAQA==' } };
     expect(parseCityDoc(JSON.parse(JSON.stringify(d))).tree.data?.heightfield?.cols).toBe(2);
   });
 
   it('rejects heights that decode to the wrong count', () => {
     const d = doc();
-    d.tree.data = { heightfield: { origin: [0, 0], cell: 8, cols: 3, rows: 3, heights: encodeHeights(new Float32Array(4)) } };
+    d.tree.data = { heightfield: { origin: [0, 0], cell: 8, cols: 3, rows: 3, heights: 'AACAPwAAAEAAAEBAAACAQA==' } }; // 4 values, not 9
     expect(() => parseCityDoc(d)).toThrow(/heightfield/);
   });
 });

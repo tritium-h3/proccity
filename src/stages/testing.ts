@@ -2,7 +2,6 @@
 // fakeGrid/fakeSplit are the former debug stages; fakeAnnotate exercises StageOutput.data.
 
 import { childId } from '../doc/tree.js';
-import { makeHeightfield } from '../doc/heightfield.js';
 import type { RegionNode } from '../doc/types.js';
 import { split } from '../grammar/ops.js';
 import type { SettingField, Stage } from './types.js';
@@ -72,7 +71,7 @@ export const fakeAnnotate: Stage = {
   run({ tree }) {
     return {
       children: new Map(),
-      data: new Map([[tree.id, { heightfield: makeHeightfield([0, 0], 8, 2, 2, new Float32Array([1, 2, 3, 4])) }]]),
+      data: new Map([[tree.id, { heightfield: { origin: [0, 0], cell: 8, cols: 2, rows: 2, heights: 'AACAPwAAAEAAAEBAAACAQA==' } }]]),
     };
   },
 };

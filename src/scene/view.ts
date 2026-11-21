@@ -3,8 +3,8 @@
 
 import * as THREE from 'three/webgpu';
 import { findById, walk } from '../doc/tree.js';
-import { decodeHeights, sampleHeight } from '../doc/heightfield.js';
-import type { Heightfield, Point2, RegionNode } from '../doc/types.js';
+import { groundHeightAt } from '../doc/ground.js';
+import type { Point2, RegionNode } from '../doc/types.js';
 import type { Stage } from '../stages/types.js';
 import { RENDERERS, type PickableMesh } from './renderers/index.js';
 import { waterSurfaceAt } from './renderers/terrain.js';
@@ -57,16 +57,7 @@ export function buildView(v: ViewState): BuiltView {
   };
 }
 
-const decoded = new WeakMap<Heightfield, Float32Array>();
-
-/** Ground elevation (m above sea level) at a point: the site's height map, or 0 without one. */
-export function groundHeightAt(tree: RegionNode, x: number, z: number): number {
-  const hf = tree.data?.heightfield;
-  if (!hf) return 0;
-  let h = decoded.get(hf);
-  if (!h) { h = decodeHeights(hf.heights); decoded.set(hf, h); }
-  return sampleHeight(hf, h, x, z);
-}
+export { groundHeightAt };
 
 /** Split long edges so a draped line follows the ground. */
 function densify(ring: Point2[], step: number): Point2[] {

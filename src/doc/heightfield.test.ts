@@ -1,17 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { decodeHeights, encodeHeights, makeHeightfield, sampleHeight } from './heightfield.js';
+import { decodeHeights } from './heightfield.js';
 
-describe('heightfield', () => {
-  it('round-trips heights through base64', () => {
-    const a = new Float32Array([0, 1.5, -15, 400]);
-    expect([...decodeHeights(encodeHeights(a))]).toEqual([...a]);
+describe('decodeHeights (old v1 saves)', () => {
+  it('decodes little-endian float32 base64', () => {
+    // [1.5, -15] as little-endian float32
+    expect([...decodeHeights('AADAPwAAcME=')]).toEqual([1.5, -15]);
   });
-
-  it('samples bilinearly and clamps outside the grid', () => {
-    const h = new Float32Array([0, 10, 20, 30]); // row z=0: 0,10; row z=8: 20,30
-    const hf = makeHeightfield([0, 0], 8, 2, 2, h);
-    expect(sampleHeight(hf, h, 4, 4)).toBeCloseTo(15);
-    expect(sampleHeight(hf, h, 0, 0)).toBe(0);
-    expect(sampleHeight(hf, h, -5, 100)).toBe(20);
+  it('rejects a byte length that is not a multiple of 4', () => {
+    expect(() => decodeHeights('AAA=')).toThrow();
   });
 });
