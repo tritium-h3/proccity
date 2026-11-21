@@ -1,7 +1,7 @@
 # Terrain stage: design
 
 **Date:** 2026-11-21
-**Status:** Draft, awaiting approval
+**Status:** Superseded for generation and rendering by `2026-11-21-terrain-v2-design.md` (kept for the foundation changes it introduced: region data, annotations, `overridesForStage`)
 **Builds on:** `2026-11-20-foundation-design.md`
 
 ## Intent

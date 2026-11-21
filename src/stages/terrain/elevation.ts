@@ -54,7 +54,13 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     const ov = override.get(groupOf[i]);
     if (ov !== undefined) return ov;
     if (c.flatType[i] === 'coastal') return 2 + cell.hop;
-    if (c.flatType[i] === 'river') return surfaceAt(cell.seed) + 1.5 + cell.hop;
+    if (c.flatType[i] === 'river') {
+      // At least half a metre above the river surface at every corner of the cell: the
+      // surface falls along the river, so the seed's level alone left the upstream end of a
+      // long cell below the water.
+      const highest = Math.max(...cell.poly[0].map(surfaceAt));
+      return Math.max(surfaceAt(cell.seed) + 1.5 + cell.hop, highest + 0.5);
+    }
     return shelfLevel.get(groupOf[i])!;
   });
 
@@ -76,8 +82,12 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
       incident.set(k, e);
     }
   });
-  const bank = o.river ? offsetPolygons(o.river, 0.1) : null;
-  const shore = o.sea ? offsetPolygons(o.sea, 0.1) : null;
+  // Banks: every vertex within BAND of the river or sea sits exactly half a metre above that
+  // water (set, not just raised), whatever cell it belongs to. Dense bank vertices at
+  // per-cell heights, and corners a hair inland of the bank, made micro-cliffs along the water.
+  const BAND = 2;
+  const bank = o.river ? offsetPolygons(o.river, BAND) : null;
+  const shore = o.sea ? offsetPolygons(o.sea, BAND) : null;
   const vertex = new Map<string, number>();
   for (const [k, { p, cells: inc }] of incident) {
     const flats = inc.map(i => flatLevel[i]).filter((v): v is number => v !== null);
@@ -90,9 +100,10 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     } else {
       e = inc.reduce((s, i) => s + base[i], 0) / inc.length;
     }
-    // Only vertices of water-touching cells can lie on a bank or the shore.
-    if (bank && inc.some(i => cells[i].touchesRiver) && containsPoint(bank, p)) e = Math.max(e, surfaceAt(p) + 0.5);
-    if (shore && inc.some(i => cells[i].touchesSea) && containsPoint(shore, p)) e = Math.max(e, 0.5);
+    // Only vertices of water-touching cells can lie in a bank band.
+    const onBank = !!bank && inc.some(i => cells[i].touchesRiver) && containsPoint(bank, p);
+    const onShore = !!shore && inc.some(i => cells[i].touchesSea) && containsPoint(shore, p);
+    if (onBank || onShore) e = Math.max(onBank ? surfaceAt(p) + 0.5 : -Infinity, onShore ? 0.5 : -Infinity);
     vertex.set(k, e);
   }
 

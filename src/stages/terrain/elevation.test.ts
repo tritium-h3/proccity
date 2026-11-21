@@ -38,7 +38,10 @@ describe('computeLevels', () => {
     const { c, levels } = setup(2);
     cells.forEach((cell, i) => {
       if (c.flatType[i] === 'coastal') expect(levels.flatLevel[i]).toBeCloseTo(2 + cell.hop, 5);
-      if (c.flatType[i] === 'river') expect(levels.flatLevel[i]).toBeCloseTo(riverSurfaceAt(course, profile, cell.seed) + 1.5 + cell.hop, 5);
+      if (c.flatType[i] === 'river') {
+        const highest = Math.max(...cell.poly[0].map(p => riverSurfaceAt(course, profile, p)));
+        expect(levels.flatLevel[i]).toBeCloseTo(Math.max(riverSurfaceAt(course, profile, cell.seed) + 1.5 + cell.hop, highest + 0.5), 5);
+      }
     });
   });
 

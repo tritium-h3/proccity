@@ -31,11 +31,13 @@ export function constrainedSurface(
     }
   }
   const boundaryCount = points.length;
-  // Interior points must be strictly inside: one lying on a boundary edge (a cell corner on
-  // a region's edge) makes the constrainer reject the edge and lose all interior detail.
+  // Interior points must sit well inside. One on a boundary edge makes the constrainer reject
+  // the edge (losing all interior detail); one just inside it, at a different height, makes a
+  // near-vertical sliver (e.g. a river-bed point 0.8 m from the bank).
+  const MIN_INSET = 1.5;
   for (const [x, z, y] of interior) {
     if (index.has(vkey([x, z]))) continue;
-    if (containsPoint(footprint, [x, z]) && distanceToBoundary(footprint, [x, z]) > 0.05) add(x, z, y);
+    if (containsPoint(footprint, [x, z]) && distanceToBoundary(footprint, [x, z]) > MIN_INSET) add(x, z, y);
   }
 
   const keep = (tri: number[]): boolean => {

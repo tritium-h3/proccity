@@ -5,7 +5,7 @@ import { ancestry, leaves } from '../../doc/tree.js';
 import type { CityDoc, Override, RegionNode, Settings } from '../../doc/types.js';
 import { intersect, offsetPolygons } from '../../grammar/clipper.js';
 import { checkPartition } from '../../grammar/partition.js';
-import { area } from '../../grammar/polygon.js';
+import { area, containsPoint } from '../../grammar/polygon.js';
 import { generate } from '../../pipeline/generate.js';
 import { createRng } from '../../pipeline/seeds.js';
 import { defaultsFor, resolveAttr } from '../settings.js';
@@ -106,7 +106,13 @@ describe('terrain v2 stage', () => {
       const r = run({}, seed, 2000, [{ id: 'o', stage: 'terrain', kind: 'flat', anchor: [anchor[0], anchor[1]], settings: { elevation: 80 }, createdAt: 't' }]);
       const f = r.children.find(c => c.kind === 'flat' && c.attrs.riverFlat && c.attrs.elevation === 80);
       expect(f, `seed ${seed}`).toBeDefined();
-      for (const p of f!.data!.ground!.points) expect(p[2]).toBeGreaterThanOrEqual(80 - 1e-6 - 0); // banks never below the level here (80 is above the river)
+      const river = r.children.find(c => c.kind === 'river')!;
+      const nearRiver = offsetPolygons(river.geometry.footprint, 2);
+      for (const p of f!.data!.ground!.points) {
+        // Level at the override, except the bank band, which sits just above the river.
+        if (containsPoint(nearRiver, [p[0], p[1]])) expect(p[2]).toBeCloseTo(riverSurfaceAt(river.data!.course!, river.data!.profile!, [p[0], p[1]]) + 0.5, 6);
+        else expect(p[2]).toBeCloseTo(80, 6);
+      }
       return;
     }
     throw new Error('no river flat found in seeds 1–6');
@@ -142,4 +148,29 @@ describe('terrain v2 stage', () => {
     const r = generate({ doc: { ...doc, stages: [{ ...doc.stages[0], seedOffset: 3 }] }, fromStage: 0, stages: [terrain] });
     expect(r.overrides.length + r.dropped.length).toBe(1);
   });
+});
+
+describe('no micro-cliffs from near-duplicate vertices (found in the browser)', () => {
+  for (const [cellSize, seed] of [[60, 1], [60, 2], [120, 3], [120, 4]] as const) {
+    it(`keeps vertices closer than 1.5 m within 3 m of each other's height (cellSize ${cellSize}, seed ${seed})`, () => {
+      const r = run({ cellSize, ponds: 6 }, seed);
+      const pts = r.children.flatMap(c => c.data!.ground!.points);
+      const grid = new Map<string, [number, number, number][]>();
+      for (const p of pts) {
+        const k = `${Math.floor(p[0] / 2)},${Math.floor(p[1] / 2)}`;
+        (grid.get(k) ?? grid.set(k, []).get(k)!).push(p);
+      }
+      let worst = 0;
+      for (const p of pts) {
+        const gx = Math.floor(p[0] / 2), gz = Math.floor(p[1] / 2);
+        for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+          for (const q of grid.get(`${gx + dx},${gz + dz}`) ?? []) {
+            const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+            if (d > 0.01 && d < 1.5) worst = Math.max(worst, Math.abs(p[2] - q[2]));
+          }
+        }
+      }
+      expect(worst).toBeLessThan(3);
+    });
+  }
 });

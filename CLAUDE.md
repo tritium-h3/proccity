@@ -8,7 +8,8 @@ Conventions follow `~/.claude/CLAUDE.md`; this file covers what's specific here.
 A **shape grammar** for cities, built in stages (terrain → districts → arterials → blocks →
 lots → lot sections → building parts). Each stage **divides** the regions the previous one
 produced, never adds. The design is `docs/superpowers/specs/2026-11-20-foundation-design.md`.
-Stages so far: **terrain** (`docs/superpowers/specs/2026-11-21-terrain-design.md`). Each
+Stages so far: **terrain**, now v2 (`docs/superpowers/specs/2026-11-21-terrain-v2-design.md`;
+v1's height-grid design is superseded). Each
 real stage is designed with the owner one at a time; districts come next.
 
 ## Architecture (`src/`)
@@ -18,10 +19,11 @@ real stage is designed with the owner one at a time; districts come next.
   be reproduced. Every region is a **slab**: a footprint multipolygon plus a height range in
   metres *above ground* (`high: null` = open to the sky). Node ids are paths
   (`site/flat:1`). `validate.ts` refuses anything not `proccity/1`.
-  Regions can carry bulky `data` (`heightfield`, `course`, `stats`), tagged in
+  Regions can carry bulky `data` (`ground`, `course`, `profile`, `stats`), tagged in
   `dataStage` by the stage that wrote it, so pruning that stage removes it.
-  **Height map heights are metres above sea level; slab heights stay above-ground.**
-  `doc/heightfield.ts` encodes it (base64 Float32) and samples it (bilinear).
+  **`data.ground` is a region's own triangulated surface: absolute elevations (m above sea
+  level). Slab heights stay above-ground.** `doc/ground.ts` queries it, including
+  `groundHeightAt`. (`heightfield` is v1-only, decoded just so old saves validate.)
 - **`grammar/`: pure geometry.** `split` (along x, z or y; sizes in metres or `'1r'`
   weights), `cut`, `inset`, `band`, plus polygon helpers. `clipper.ts` is the **only** file
   importing the polygon library (`clipper2-ts`; `clipper2-js` was tried and is broken,
@@ -37,12 +39,21 @@ real stage is designed with the owner one at a time; districts come next.
   inherit down the tree through `resolveAttr` (own > ancestors > stage setting).
   **Adding a stage:** a module, a line in `stages/index.ts`, and a renderer in
   `scene/renderers/`.
-- **`stages/terrain/`:** water first (`layout.ts`: sea, river, flats, ponds as
-  polygons), then the height map (`field.ts`: pinned features, two-pass harmonic solve,
-  noise faded by distance from features), then the division into sea, river, pond, flat,
-  slope and hills regions (`stage.ts`). About 235 ms at 2 km. Inland edges are pinned
-  high but taper near the sea and stay free near flats and ponds; pinning them hard
-  produced cliffs and walls.
+- **`stages/terrain/` (v2, all polygons):**
+  - `water.ts`: the sea and river carve the site, with a gentle coast and a monotonic river
+    profile.
+  - `cells.ts`: Voronoi cells over the land (`d3-delaunay`) and a neighbour graph, including
+    hop distance and nearest water.
+  - `rules.ts`: `TERRAIN_RULES`, a declarative weighted rule table (a stochastic grammar),
+    then smoothing, flat subtypes (coastal, river, shelf), ponds (never touching sea, river
+    or a pond), and merging same-kind cells into regions.
+  - `elevation.ts`: vertex and centre elevations, built up from the water, with banks
+    clamped above water surfaces.
+  - `ground.ts`: constrained Delaunay surfaces (`delaunator` + `constrainautor`, with an
+    `earcut` fallback).
+  - `stage.ts`: assembly. About 3,200 triangles and about 100–120 ms warm at 2 km.
+
+  **Fine detail is cosmetic, in the renderer's shader. Never add it to the geometry.**
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
   so regenerating stage k never disturbs earlier stages and undo is exact.
@@ -57,8 +68,10 @@ real stage is designed with the owner one at a time; districts come next.
 - **`scene/`:** `cityScene.ts` (renderer, camera, controls, picking, outlines), `view.ts`
   (shows the site plus the current stage's regions; `groundHeightAt`; outlines drape over
   the ground), `slabMesh.ts` (merged mesh with a face → node lookup). The terrain renderer
-  draws the height map as a lit mesh coloured by region, plus water surfaces, and picks by
-  ground point (`nodeIdAt`) rather than by face. Stage renderers live in `scene/renderers/`, **not on the stage**,
+  merges every region's `ground` into one mesh with a **TSL node material**
+  (`three/tsl`): kind colours blended by jittered weights for ragged edges, colour variation,
+  noise bump, up to ±1.5 m displacement, a ragged wet-sand band at sea level, and animated
+  water. It picks by ground point (`nodeIdAt`) rather than by face. Stage renderers live in `scene/renderers/`, **not on the stage**,
   so the worker never bundles Three.js. The current stage's regions cover the site
   completely, so the site ground isn't drawn under them; drawing both z-fights.
 - `server.ts`: placeholder Express backend (`/api/health`). `config.ts`: hosts and ports.

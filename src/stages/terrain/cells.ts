@@ -75,13 +75,44 @@ export function buildCells(
   });
   const v = voronoi(seeds);
 
+  // Collapse Voronoi corners closer than SNAP into one point. Voronoi diagrams often have
+  // very short edges; their two corners border different cells, get different heights, and
+  // render as near-vertical slivers. Snapping before clipping keeps the cells a partition,
+  // since every cell sees the same snapped corners.
+  const SNAP = 3;
+  const reps: Point2[] = [];
+  const repGrid = new Map<string, number[]>();
+  const snapPoint = (p: Point2): Point2 => {
+    const gx = Math.floor(p[0] / SNAP), gz = Math.floor(p[1] / SNAP);
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      for (const r of repGrid.get(`${gx + dx},${gz + dz}`) ?? []) {
+        if (Math.hypot(reps[r][0] - p[0], reps[r][1] - p[1]) < SNAP) return reps[r];
+      }
+    }
+    reps.push(p);
+    const k = `${gx},${gz}`;
+    repGrid.set(k, [...(repGrid.get(k) ?? []), reps.length - 1]);
+    return p;
+  };
+  const snappedRing = (i: number): Point2[] | null => {
+    const ring = v.cellPolygon(i);
+    if (!ring) return null;
+    const out: Point2[] = [];
+    for (const p of ring.slice(0, -1) as Point2[]) {
+      const q = snapPoint(p);
+      if (!out.length || out[out.length - 1] !== q) out.push(q);
+    }
+    if (out.length > 1 && out[0] === out[out.length - 1]) out.pop();
+    return out.length >= 3 ? out : null;
+  };
+
   // Clip each Voronoi cell to the land; every resulting piece is its own cell.
   type Piece = { seed: Point2; poly: Polygon; area: number; origin: number };
   let pieces: Piece[] = [];
   seeds.forEach((s, i) => {
-    const ring = v.cellPolygon(i);
+    const ring = snappedRing(i);
     if (!ring) return;
-    const clipped = intersect([[ring.slice(0, -1) as Point2[]]], land);
+    const clipped = intersect([[ring]], land);
     for (const poly of clipped) {
       const a = area([poly]);
       if (a <= 0) continue;
