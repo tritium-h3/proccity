@@ -3,7 +3,6 @@
 
 import type * as THREE from 'three/webgpu';
 import type { RegionNode } from '../../doc/types.js';
-import { renderDebugGrid, renderDebugSplit } from './debug.js';
 import { renderSite } from './site.js';
 
 export interface RenderContext { tree: RegionNode; isCurrent: boolean }
@@ -13,6 +12,4 @@ export type StageRenderer = (nodes: RegionNode[], ctx: RenderContext) => Rendere
 
 export const RENDERERS: Record<string, StageRenderer> = {
   site: renderSite,
-  'debug-grid': renderDebugGrid,
-  'debug-split': renderDebugSplit,
 };

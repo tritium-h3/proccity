@@ -30,8 +30,14 @@ export interface Heightfield {
   heights: string;
 }
 
-/** Bulky per-region data a stage may attach to an existing region. */
-export interface RegionData { heightfield?: Heightfield }
+/** Bulky per-region data a stage may attach (to its own regions, or to existing ones). */
+export interface RegionData {
+  heightfield?: Heightfield;
+  /** a centreline, e.g. a river's course from source to mouth */
+  course?: Point2[];
+  /** numbers a stage reports about a region (e.g. the terrain's pondsPlaced) */
+  stats?: Record<string, number>;
+}
 
 export interface RegionNode {
   /** path from the root, e.g. 'site/district:3/block:14' */

@@ -58,6 +58,13 @@ function checkNode(v: unknown, path: string) {
       try { n = decodeHeights(hf.heights).length; } catch { /* reported below */ }
       if (n !== (hf.cols as number) * (hf.rows as number)) fail(at, `heights should hold cols × rows = ${(hf.cols as number) * (hf.rows as number)} values`);
     }
+    if (v.data.course !== undefined) {
+      if (!Array.isArray(v.data.course)) fail(`${path}.data.course`, 'should be an array of points');
+      v.data.course.forEach((p: unknown, i: number) => checkPoint(p, `${path}.data.course[${i}]`));
+    }
+    if (v.data.stats !== undefined) {
+      if (!isObj(v.data.stats) || !Object.values(v.data.stats).every(x => typeof x === 'number')) fail(`${path}.data.stats`, 'should map names to numbers');
+    }
   }
   if (!Array.isArray(v.children)) fail(`${path}.children`, 'should be an array');
   v.children.forEach((c: unknown, i: number) => checkNode(c, `${path}.children[${i}]`));
