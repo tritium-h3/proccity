@@ -3,13 +3,12 @@ import { createSite } from '../doc/create.js';
 import { ancestry, attachChildren, leaves } from '../doc/tree.js';
 import type { RegionNode, Settings } from '../doc/types.js';
 import { checkPartition } from '../grammar/partition.js';
+import { createRng as rng } from '../pipeline/seeds.js';
 import { debugGrid, DEBUG_COLOURS } from './debug-grid/stage.js';
 import { debugSplit } from './debug-split/stage.js';
 import { resolveAttr } from './settings.js';
 import type { Stage } from './types.js';
 
-// Local seeded RNG until the pipeline's createRng exists (plan Task 6 swaps it in).
-const rng = (seed: number) => () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
 
 function run(stage: Stage, tree: RegionNode, settings: Settings, seed = 1) {
   return stage.run({
