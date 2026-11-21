@@ -15,9 +15,15 @@ import { defaultsFor } from '../stages/settings.js';
 import { createAutosaver, type SaveState } from '../storage/autosave.js';
 import * as db from '../storage/db.js';
 import { downloadCity, importCityAndSave, readFileText } from '../storage/file.js';
-import { editStateOf, History, regenerateFrom, type EditState } from './history.js';
+import { combineFrom, editStateOf, History, regenerateFrom, type EditState } from './history.js';
+import { isTextEntry } from './keys.js';
+import { normalizeStages } from './normalize.js';
 
-export interface Toast { id: string; kind: 'warning' | 'error' | 'info'; message: string; undoable: boolean }
+export interface Toast {
+  id: string; kind: 'warning' | 'error' | 'info'; message: string; undoable: boolean;
+  /** history depth right after the edit that caused it; Undo only applies while it's still the latest */
+  undoDepth?: number;
+}
 export interface PickHit { nodeId: string; point: Point2 }
 
 const now = () => new Date().toISOString();
@@ -55,13 +61,18 @@ export function useCityEditor() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [currentStage, setCurrentStage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
+  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false, depth: 0 });
 
   const docRef = useRef<CityDoc | null>(null);
   const historyRef = useRef<History | null>(null);
   const clientRef = useRef<GeneratorClient | null>(null);
   const lastPickRef = useRef<Point2 | null>(null);
   const selectedRef = useRef<string | null>(null);
+  /** Earliest stage a superseded or failed request was meant to rebuild but never applied. */
+  const pendingFromRef = useRef<number | null>(null);
+  /** Bumped whenever a city is opened (or deleted); results from an older session are discarded. */
+  const sessionRef = useRef(0);
+  const inflightRef = useRef<Promise<unknown> | null>(null);
   const autosaver = useMemo(() => createAutosaver(db.saveCity), []);
 
   const select = useCallback((id: string | null) => {
@@ -71,7 +82,7 @@ export function useCityEditor() {
 
   const syncHistory = useCallback(() => {
     const h = historyRef.current;
-    setUndoState({ canUndo: h?.canUndo ?? false, canRedo: h?.canRedo ?? false });
+    setUndoState({ canUndo: h?.canUndo ?? false, canRedo: h?.canRedo ?? false, depth: h?.depth ?? 0 });
   }, []);
 
   const setDoc = useCallback((d: CityDoc | null) => {
@@ -96,31 +107,51 @@ export function useCityEditor() {
       setSaveState(s);
       if (s === 'saved') refreshCities();
     });
-    return () => { unsub(); client.dispose(); void autosaver.flush(); };
+    // Don't lose a debounced save when the tab is hidden or closed.
+    const flushNow = () => { void autosaver.flush(); };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flushNow(); };
+    window.addEventListener('pagehide', flushNow);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      unsub();
+      window.removeEventListener('pagehide', flushNow);
+      document.removeEventListener('visibilitychange', onVisibility);
+      client.dispose();
+      flushNow();
+    };
   }, [autosaver, refreshCities]);
 
   /** Apply an edit state to the current doc and regenerate what changed. */
   const commit = useCallback(async (prev: EditState, next: EditState) => {
     const base = docRef.current;
     if (!base) return;
+    const session = sessionRef.current;
     const updated: CityDoc = { ...base, ...structuredClone(next), modifiedAt: now() };
-    const from = regenerateFrom(prev, next, STAGES);
+    // The tree only reflects applied results: if an earlier request was superseded (or
+    // failed), its stages were never rebuilt, so regenerate from the earliest of them.
+    const from = combineFrom(pendingFromRef.current, regenerateFrom(prev, next, STAGES));
     if (from === null) {
       setDoc(updated);
       autosaver.schedule(updated);
       return;
     }
+    pendingFromRef.current = from;
     setDoc(updated);
-    const outcome = await clientRef.current!.run(updated, from, stageIndex => setGenerating({ stageIndex }));
+    const run = clientRef.current!.run(updated, from, stageIndex => setGenerating({ stageIndex }));
+    inflightRef.current = run;
+    const outcome = await run;
     if (outcome.status === 'superseded') return;
+    if (session !== sessionRef.current) return; // a different city (or a fresh load) is open now
     setGenerating(null);
     if (outcome.status === 'error') {
+      // pendingFrom stays set, so the next edit rebuilds the stages this one failed to.
       toast({ kind: 'error', message: `Generation failed: ${outcome.message}`, undoable: false });
       return;
     }
+    pendingFromRef.current = null;
     const { result } = outcome;
     const latest = docRef.current;
-    if (!latest || latest.id !== updated.id) return; // city switched meanwhile
+    if (!latest) return;
     const done: CityDoc = { ...latest, tree: result.tree, overrides: result.overrides };
     // Ids are positional, so after a regenerate the old id may name a different region.
     // Re-find the selection the way overrides re-attach: same stage and kind, under the picked point.
@@ -140,7 +171,7 @@ export function useCityEditor() {
       console.warn('[proccity] partition problems:', result.partitionProblems);
     }
     if (result.dropped.length) {
-      toast({ kind: 'warning', message: result.dropped.map(describeDrop).join('\n'), undoable: true });
+      toast({ kind: 'warning', message: result.dropped.map(describeDrop).join('\n'), undoable: true, undoDepth: historyRef.current?.depth });
     }
   }, [autosaver, select, setDoc, toast]);
 
@@ -156,7 +187,13 @@ export function useCityEditor() {
     void commit(prev, next);
   }, [commit, syncHistory]);
 
-  const openDoc = useCallback((d: CityDoc, regenerate: boolean) => {
+  const openDoc = useCallback((loaded: CityDoc, regenerate: boolean) => {
+    // Saved cities must survive stages being added, reordered or retired.
+    const d = normalizeStages(loaded, STAGES);
+    sessionRef.current += 1;
+    pendingFromRef.current = null;
+    setGenerating(null);
+    setToasts(ts => ts.filter(t => !t.undoable)); // their Undo belongs to the previous city
     historyRef.current = new History(editStateOf(d));
     syncHistory();
     select(null);
@@ -194,14 +231,20 @@ export function useCityEditor() {
     return () => { cancelled = true; };
   }, [openDoc]);
 
+  /** Let an in-flight generation land and its save go out before leaving this city. */
+  const settle = useCallback(async () => {
+    await inflightRef.current?.catch(() => undefined);
+    await autosaver.flush();
+  }, [autosaver]);
+
   const actions = useMemo(() => ({
     async newCity() {
-      await autosaver.flush();
+      await settle();
       openDoc(newDoc(), true);
     },
     async openCity(id: string) {
       if (id === docRef.current?.id) return;
-      await autosaver.flush();
+      await settle();
       const d = await db.loadCity(id).catch(() => undefined);
       if (d) openDoc(d, false);
       else toast({ kind: 'error', message: 'Could not open that city.', undoable: false });
@@ -214,7 +257,17 @@ export function useCityEditor() {
       autosaver.schedule(renamed);
     },
     async deleteCity(id: string) {
-      await db.deleteCity(id).catch(() => toast({ kind: 'error', message: 'Could not delete that city.', undoable: false }));
+      if (id === docRef.current?.id) {
+        // A pending autosave or in-flight result would write the city straight back.
+        sessionRef.current += 1;
+        autosaver.cancel();
+      }
+      try {
+        await db.deleteCity(id);
+      } catch {
+        toast({ kind: 'error', message: 'Could not delete that city.', undoable: false });
+        return;
+      }
       const list = await db.listCities().catch(() => []);
       setCities(list);
       if (id === docRef.current?.id) {
@@ -224,6 +277,7 @@ export function useCityEditor() {
     },
     async importFile(file: File) {
       try {
+        await settle();
         const text = await readFileText(file);
         const d = await importCityAndSave(text, { save: db.saveCity, newId: uuid(), now: now() });
         refreshCities();
@@ -244,10 +298,12 @@ export function useCityEditor() {
       }, coalesceKey);
     },
     setStageSetting(stageIndex: number, key: string, value: SettingValue, coalesceKey?: string) {
-      edit(s => { s.stages[stageIndex].settings[key] = value; }, coalesceKey);
+      const id = STAGES[stageIndex].id;
+      edit(s => { s.stages.find(st => st.id === id)!.settings[key] = value; }, coalesceKey);
     },
     reroll(stageIndex: number) {
-      edit(s => { s.stages[stageIndex].seedOffset += 1; });
+      const id = STAGES[stageIndex].id;
+      edit(s => { s.stages.find(st => st.id === id)!.seedOffset += 1; });
     },
     nextStage() {
       const d = docRef.current;
@@ -311,14 +367,13 @@ export function useCityEditor() {
     dismissToast(id: string) {
       setToasts(ts => ts.filter(t => t.id !== id));
     },
-  }), [autosaver, commit, edit, openDoc, refreshCities, select, setDoc, syncHistory, toast]);
+  }), [autosaver, commit, edit, openDoc, refreshCities, select, setDoc, settle, syncHistory, toast]);
 
   // Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z — not while typing in a field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (isTextEntry(e.target as HTMLInputElement | null)) return;
       e.preventDefault();
       if (e.shiftKey) actions.redo(); else actions.undo();
     };
@@ -330,6 +385,7 @@ export function useCityEditor() {
     doc, cities, saveState, generating, toasts, currentStage, selectedId,
     canUndo: undoState.canUndo,
     canRedo: undoState.canRedo,
+    historyDepth: undoState.depth,
     actions,
   };
 }

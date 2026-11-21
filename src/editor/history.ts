@@ -31,6 +31,8 @@ export class History {
   get current(): EditState { return structuredClone(this.now); }
   get canUndo(): boolean { return this.past.length > 0; }
   get canRedo(): boolean { return this.future.length > 0; }
+  /** Number of undo steps available; identifies 'the edit just made' for toast Undo. */
+  get depth(): number { return this.past.length; }
 
   /** Record `next`. A push with the same coalesceKey as the previous one replaces it. */
   push(next: EditState, coalesceKey?: string): void {
@@ -80,4 +82,12 @@ export function regenerateFrom(a: EditState, b: EditState, stages: Stage[]): num
   }
   if (a.generatedThrough !== b.generatedThrough) candidates.push(Math.min(a.generatedThrough, b.generatedThrough) + 1);
   return candidates.length ? Math.min(...candidates) : null;
+}
+
+/** The stage to regenerate from, given a still-unapplied earlier request (`pending`).
+ *  A superseded request never reached the tree, so its stages must be rebuilt too. */
+export function combineFrom(pending: number | null, from: number | null): number | null {
+  if (pending === null) return from;
+  if (from === null) return pending;
+  return Math.min(pending, from);
 }

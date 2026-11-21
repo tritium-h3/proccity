@@ -44,3 +44,16 @@ describe('autosave', () => {
     expect(saved).toEqual(['now']);
   });
 });
+
+describe('autosave cancel (review: Important 6)', () => {
+  it('drops a pending save so a deleted city is not written back', async () => {
+    vi.useFakeTimers();
+    const saved: string[] = [];
+    const a = createAutosaver(async d => { saved.push(d.name); }, 1000);
+    a.schedule(doc('doomed'));
+    a.cancel();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(saved).toEqual([]);
+    vi.useRealTimers();
+  });
+});

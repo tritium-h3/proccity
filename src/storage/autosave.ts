@@ -32,6 +32,12 @@ export function createAutosaver(save: (doc: CityDoc) => Promise<void>, delayMs =
       timer = setTimeout(() => { void flush(); }, delayMs);
     },
     flush,
+    /** Forget any pending save (e.g. the city is being deleted). */
+    cancel(): void {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      pendingDoc = null;
+    },
     subscribe(fn: (s: SaveState) => void): () => void {
       listeners.add(fn);
       return () => listeners.delete(fn);

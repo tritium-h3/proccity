@@ -84,3 +84,27 @@ describe('regenerateFrom', () => {
     expect(regenerateFrom(base(), base(), STAGES)).toBeNull();
   });
 });
+
+import { combineFrom } from './history.js';
+
+describe('combineFrom (review: Critical 1)', () => {
+  it('keeps an unapplied earlier stage when a later edit supersedes it', () => {
+    // 6→8 cells (from 0) still in flight, then a height edit (from 1): must rebuild from 0.
+    expect(combineFrom(0, 1)).toBe(0);
+    expect(combineFrom(null, 1)).toBe(1);
+    expect(combineFrom(2, null)).toBe(2);
+    expect(combineFrom(null, null)).toBeNull();
+  });
+});
+
+describe('History.depth (review: Important 3)', () => {
+  it('tracks how many undo steps exist', () => {
+    const h = new History(base());
+    expect(h.depth).toBe(0);
+    h.push(withCells(4));
+    expect(h.depth).toBe(1);
+    h.push(withCells(5));
+    h.undo();
+    expect(h.depth).toBe(1);
+  });
+});
