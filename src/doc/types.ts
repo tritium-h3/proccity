@@ -35,6 +35,8 @@ export interface RegionData {
   heightfield?: Heightfield;
   /** a centreline, e.g. a river's course from source to mouth */
   course?: Point2[];
+  /** a value per course point, e.g. the river's surface elevation (m above sea level) */
+  profile?: number[];
   /** numbers a stage reports about a region (e.g. the terrain's pondsPlaced) */
   stats?: Record<string, number>;
 }

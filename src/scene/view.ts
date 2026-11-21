@@ -7,6 +7,7 @@ import { decodeHeights, sampleHeight } from '../doc/heightfield.js';
 import type { Heightfield, Point2, RegionNode } from '../doc/types.js';
 import type { Stage } from '../stages/types.js';
 import { RENDERERS, type PickableMesh } from './renderers/index.js';
+import { waterSurfaceAt } from './renderers/terrain.js';
 
 export interface ViewState {
   tree: RegionNode;
@@ -88,8 +89,11 @@ export function outline(tree: RegionNode, id: string, colour: number, opacity: n
     if (!outer) continue;
     const ring = high === null ? densify(outer, 8) : outer;
     // A closed Line, not LineLoop: WebGPURenderer doesn't support LineLoop.
-    const lift = high === null ? 1 : high + 0.3;
-    const pts = [...ring, ring[0]].map(([x, z]) => new THREE.Vector3(x, groundHeightAt(tree, x, z) + lift, z));
+    // Over water the ground is the bed; draw on the water surface instead, or it's hidden.
+    const water = waterSurfaceAt(node);
+    const y = (x: number, z: number) => high !== null ? groundHeightAt(tree, x, z) + high + 0.3
+      : Math.max(groundHeightAt(tree, x, z), water ? water([x, z]) : -Infinity) + 1;
+    const pts = [...ring, ring[0]].map(([x, z]) => new THREE.Vector3(x, y(x, z), z));
     const g = new THREE.BufferGeometry().setFromPoints(pts);
     group.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: colour, transparent: opacity < 1, opacity })));
   }

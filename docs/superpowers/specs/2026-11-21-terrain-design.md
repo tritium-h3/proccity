@@ -154,9 +154,13 @@ All randomness comes from the stage's seeded `rng`.
    - **Course:** a polyline between them, meandered by recursive midpoint displacement
      with amplitude scaled by `meander`, then smoothed (Chaikin, 3 passes). The river
      polygon is `band(course, riverWidth)` minus the sea, so the mouth meets the sea
-     cleanly.
-   - **Surface:** the river surface descends linearly along the course from its source
-     elevation (see step 5) to 0 m at the mouth.
+     cleanly. Meander displacements that would enter
+     the sea before the mouth are retried at half the offset, and only the river's largest
+     piece is kept. Stray bits are left to the land. *(Changed after review.)*
+   - **Surface:** walking downstream, the surface is the lowest pass-1 ground met so far
+     minus 1.5 m, capped 1 m below any flat it passes, and 0 at a coastal mouth. It's stored
+     per course point as `data.profile`. *(Changed after review: a linear descent left
+     rivers perched tens of metres above the flats beside them.)*
 3. **Flats:** `flats` blobs, irregular closed shapes about `flatSize` across.
    - The first flat is placed touching the coast. With no shore, it touches the river
      bank in the river's lower third. With neither, it goes anywhere.
@@ -173,15 +177,17 @@ All randomness comes from the stage's seeded `rng`.
    at least 60 m from the sea, the river and other ponds, and 30 m from flats, by rejection sampling with
    40 tries. A pond that can't be placed is skipped, and the stage reports
    `pondsPlaced < ponds` as an attribute on the site (`pondsPlaced`) rather than failing.
-5. **Pinned heights** on the grid (8 m spacing, `cols = rows = size / 8 + 1`):
+5. **Pinned heights** on the grid (exactly 8 m spacing, `cols = rows = round(size / 8) + 1`;
+   the grid may overhang the site by up to 4 m):
    - **Sea:** from 0 m at the coastline falling to −15 m at the site edge.
    - **River:** bed at surface − 3 m inside the band. The river source elevation is
      taken from the base solve below, evaluated without the river, then clamped to at
      least 5 m. *Builder's choice:* a two-pass solve, or a 0.6 × relief source
      heuristic.
-   - **Ponds:** bed at pond level − 2 m. Pond level = the base height at the pond centre,
-     solved with the sea, river and flats pinned but not the ponds; same approach as the
-     river.
+   - **Ponds:** bed at pond level − 2 m. Pond level = the lowest pass-1 height on the pond's
+     rim, minus 0.5 m, so it can't spill over the downhill side.
+   - **Banks:** after the noise, land within two grid steps of a river or pond (flats
+     excepted) is raised to at least 0.5 m above that water's surface.
    - **Flats:** exactly their elevation, at every grid point inside them.
    - **Inland edges** (site edges not touching the sea): pinned at `relief` for the base
      solve, so land rises away from the water. They don't count as features for the noise
@@ -201,8 +207,11 @@ All randomness comes from the stage's seeded `rng`.
    - **Steepness** per grid point comes from central differences, in degrees. Points
      above `hillsThreshold` form a mask, blurred by one cell, then traced at 0.5 with
      marching squares into polygons and simplified (Douglas–Peucker, 2 m).
-   - `hills = rest ∩ steepPolys` and `slope = rest − hills`. Pieces under 2,000 m²
-     are merged into their neighbour of the other kind, so there are no specks.
+   - `hills = rest ∩ steepPolys` and `slope = rest − hills`. Each piece under 2,000 m² is
+     merged into the touching slope or hills piece it shares the most boundary with (a
+     merged region may hold several polygons). Pieces under 1 m² with no neighbour are
+     Clipper noise and are dropped. An isolated speck with no slope or hills neighbour
+     remains.
    - Slope and hills are split into **connected components**, each its own region, so
      a suburb can sit on *one* foothill slope.
 9. **Partition check:** in dev builds the pipeline's `checkPartition` covers it.
@@ -220,11 +229,15 @@ All are open slabs (`low 0, high null`). Names and attributes:
 | `slope` | `slope:<i>` | `minElevation`, `maxElevation`, `meanSteepness` (°) |
 | `hills` | `hills:<i>` | `minElevation`, `maxElevation`, `meanSteepness` (°) |
 
-The site node gets `data.heightfield` and `attrs.pondsPlaced`.
+The site node gets `data.heightfield` and `data.stats` (`pondsPlaced`, `pondsRequested`).
+Stages can't set attributes on existing regions, so stats travel as data. The river also
+carries `data.course` and `data.profile`, plus attrs `sourceSurface` and `mouthSurface`.
 
 ### Overrides
 
-`flat` regions accept `elevation`. Because an override is resolved *after* the stage
+`flat` regions accept `elevation` (1–400 m, whole metres). It isn't clamped to
+`relief`, so the ground always matches the reported elevation. Flat elevations are whole
+metres, matching the slider's step. Because an override is resolved *after* the stage
 runs (foundation pipeline), the terrain stage reads its own overrides **before** pinning
 heights. The pipeline passes `overridesForStage: Override[]` to `run()`, extending
 `StageInput`, and the stage matches each override to the flat whose shape contains its

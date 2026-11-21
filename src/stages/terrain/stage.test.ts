@@ -56,20 +56,12 @@ describe('terrain stage', () => {
     }
   });
 
-  it('runs the river downhill', () => {
+  it('runs the river downhill and ends at sea level on the coast', () => {
     const river = def.children.find(c => c.kind === 'river')!;
-    const course = river.data!.course!;
-    const src = river.attrs.sourceSurface as number;
-    expect(src).toBeGreaterThanOrEqual(5);
-    // surface is linear in arc length from source to 0: check non-increasing at the vertices
-    let s = 0, prev = Infinity;
-    const L = course.slice(1).reduce((a, p, i) => a + Math.hypot(p[0] - course[i][0], p[1] - course[i][1]), 0);
-    course.forEach((p, i) => {
-      if (i) s += Math.hypot(p[0] - course[i - 1][0], p[1] - course[i - 1][1]);
-      const surf = src * (1 - s / L);
-      expect(surf).toBeLessThanOrEqual(prev + 1e-9);
-      prev = surf;
-    });
+    const profile = river.data!.profile!;
+    expect(profile).toHaveLength(river.data!.course!.length);
+    profile.forEach((v, i) => { expect(v).toBeGreaterThanOrEqual(0); if (i) expect(v).toBeLessThanOrEqual(profile[i - 1]); });
+    expect(profile.at(-1)).toBe(0);
   });
 
   it('puts pond beds below their surface', () => {
@@ -163,4 +155,87 @@ describe('flat elevations match the override slider (found in the browser walk-t
       }
     }
   });
+});
+
+import { area } from '../../grammar/polygon.js';
+import { intersect, offsetPolygons } from '../../grammar/clipper.js';
+
+describe('terrain review fixes', () => {
+  const surfaceAt = (river: RegionNode, x: number, z: number) => {
+    const course = river.data!.course!;
+    const profile = river.data?.profile;
+    let best = 0, bd = Infinity;
+    course.forEach((p, i) => { const d = (p[0] - x) ** 2 + (p[1] - z) ** 2; if (d < bd) { bd = d; best = i; } });
+    if (profile) return profile[best];
+    const src = river.attrs.sourceSurface as number;
+    return src * (1 - best / (course.length - 1));
+  };
+
+  for (const shore of ['none', 'north', 'east', 'south', 'west']) {
+    for (const seed of [1, 2, 3, 4]) {
+      it(`keeps water no higher than the land beside it (shore ${shore}, seed ${seed})`, () => {
+        const r = run({ shore, ponds: 3 }, seed);
+        const g = gridFor(2000), n = g.cols;
+        const water = new Uint8Array(n * n);
+        const surf = new Float32Array(n * n).fill(NaN);
+        for (const c of r.children) {
+          if (c.kind !== 'river' && c.kind !== 'pond') continue;
+          rasterize(g, c.geometry.footprint).forEach((v, k) => {
+            if (!v) return;
+            water[k] = 1;
+            surf[k] = c.kind === 'pond' ? (c.attrs.surface as number) : surfaceAt(c, g.origin[0] + (k % n) * 8, g.origin[1] + Math.floor(k / n) * 8);
+          });
+        }
+        const sea = r.children.find(c => c.kind === 'sea');
+        const seaM = sea ? rasterize(g, sea.geometry.footprint) : new Uint8Array(n * n);
+        let worst = 0;
+        for (let k = 0; k < n * n; k++) {
+          if (!water[k]) continue;
+          const i = k % n, j = Math.floor(k / n);
+          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const ii = i + di, jj = j + dj;
+            if (ii < 0 || jj < 0 || ii >= n || jj >= n) continue;
+            const kk = jj * n + ii;
+            if (water[kk] || seaM[kk]) continue;
+            worst = Math.max(worst, surf[k] - r.h[kk]);
+          }
+        }
+        expect(worst).toBeLessThan(0.5);
+      });
+    }
+  }
+
+  it('keeps an elevation override above the relief: ground and attribute agree', () => {
+    const flat1 = run({ relief: 150 }, 1).children.find(c => c.name === 'flat:1')!;
+    const ring = flat1.geometry.footprint[0][0];
+    const anchor: [number, number] = [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length];
+    const r = run({ relief: 150 }, 1, 2000, [{ id: 'o', stage: 'terrain', kind: 'flat', anchor, settings: { elevation: 300 }, createdAt: 't' }]);
+    const f = r.children.find(c => c.name === 'flat:1')!;
+    expect(f.attrs.elevation).toBe(300);
+    pointsIn(2000, f).forEach((v, k) => { if (v) expect(Math.abs(r.h[k] - 300)).toBeLessThan(0.01); });
+  });
+
+  it('leaves no degenerate or mergeable specks', () => {
+    for (const shore of ['none', 'south', 'east']) for (const seed of [1, 3, 5, 7]) {
+      const r = run({ shore }, seed);
+      const land = r.children.filter(c => c.kind === 'slope' || c.kind === 'hills');
+      for (const c of land) {
+        const a = area(c.geometry.footprint);
+        expect(a).toBeGreaterThan(1);
+        if (a < 2000) {
+          // a remaining speck must have no slope/hills neighbour it could have merged into
+          const grown = offsetPolygons(c.geometry.footprint, 0.5);
+          const touching = land.filter(o => o !== c && area(intersect(grown, o.geometry.footprint)) > 0.01);
+          expect(touching.map(t => t.id)).toEqual([]);
+        }
+      }
+    }
+  }, 60_000);
+
+  it('makes the river one connected piece', () => {
+    for (const shore of ['none', 'north', 'east', 'south', 'west']) for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const river = run({ shore, meander: 1 }, seed).children.find(c => c.kind === 'river');
+      expect(river?.geometry.footprint.length, `shore ${shore} seed ${seed}`).toBe(1);
+    }
+  }, 60_000);
 });

@@ -7,8 +7,8 @@
 
 import { childId } from '../../doc/tree.js';
 import { makeHeightfield } from '../../doc/heightfield.js';
-import type { MultiPolygon, Point2, RegionNode, Settings } from '../../doc/types.js';
-import { difference, intersect, union } from '../../grammar/clipper.js';
+import type { MultiPolygon, Point2, Polygon, RegionNode, Settings } from '../../doc/types.js';
+import { difference, intersect, offsetPolygons, union } from '../../grammar/clipper.js';
 import { marchingSquares, simplify } from '../../grammar/contour.js';
 import { area, bounds, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
@@ -21,7 +21,8 @@ const RIVER_DEPTH = 3;     // m from river surface to bed
 const POND_DEPTH = 2;      // m from pond surface to bed
 const FADE = 120;          // m over which noise fades in away from features
 const MIN_LAND = 0.5;      // m: land never dips to/below sea level
-const SPECK = 2000;        // m²: slope/hills pieces smaller than this merge into the other kind
+const SPECK = 2000;        // m²: slope/hills pieces smaller than this merge into a neighbour
+const BANK = 0.5;          // m: land beside a river or pond stays at least this far above its surface
 
 const smoothstep = (e0: number, e1: number, x: number) => {
   const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1);
@@ -37,12 +38,9 @@ function at(g: Grid, a: Float32Array, p: Point2): number {
   return (a[k] * (1 - tx) + a[k + 1] * tx) * (1 - tz) + (a[k + g.cols] * (1 - tx) + a[k + g.cols + 1] * tx) * tz;
 }
 
-/** Arc-length position (0..1) of the course vertex nearest each grid point in `mask`. */
-function courseFraction(g: Grid, mask: Uint8Array, course: Point2[]): Float32Array {
-  const cum = [0];
-  for (let i = 1; i < course.length; i++) cum.push(cum[i - 1] + Math.hypot(course[i][0] - course[i - 1][0], course[i][1] - course[i - 1][1]));
-  const L = cum[cum.length - 1] || 1;
-  const out = new Float32Array(mask.length);
+/** Index of the course vertex nearest each grid point in `mask` (−1 elsewhere). */
+function nearestCourseIndex(g: Grid, mask: Uint8Array, course: Point2[]): Int32Array {
+  const out = new Int32Array(mask.length).fill(-1);
   for (let k = 0; k < mask.length; k++) {
     if (!mask[k]) continue;
     const x = g.origin[0] + (k % g.cols) * g.cell, z = g.origin[1] + Math.floor(k / g.cols) * g.cell;
@@ -51,7 +49,7 @@ function courseFraction(g: Grid, mask: Uint8Array, course: Point2[]): Float32Arr
       const d = (course[i][0] - x) ** 2 + (course[i][1] - z) ** 2;
       if (d < bd) { bd = d; best = i; }
     }
-    out[k] = cum[best] / L;
+    out[k] = best;
   }
   return out;
 }
@@ -99,7 +97,7 @@ export const terrain: Stage = {
     { key: 'hillsThreshold', label: 'Hills threshold', type: 'number', min: 5, max: 35, step: 1, default: 15, unit: '°', help: 'Steepness at which slope becomes hills' },
   ],
   overridable: {
-    flat: [{ key: 'elevation', label: 'Elevation', type: 'number', min: 0, max: 400, step: 1, default: 3, unit: 'm' }],
+    flat: [{ key: 'elevation', label: 'Elevation', type: 'number', min: 1, max: 400, step: 1, default: 3, unit: 'm' }],
   },
 
   run({ leaves, settings, rng, overridesForStage }) {
@@ -133,7 +131,8 @@ export const terrain: Stage = {
       const e = o.settings.elevation;
       if (o.kind !== 'flat' || typeof e !== 'number') continue;
       const idx = layout.flats.findIndex(f => containsPoint(f, o.anchor));
-      if (idx >= 0) elevations[idx] = Math.min(Math.max(e, 0), s.relief);
+      // Not clamped to relief: the ground must match the elevation the region reports.
+      if (idx >= 0) elevations[idx] = Math.max(1, Math.round(e));
     }
 
     const seaM = layout.sea ? rasterize(g, layout.sea) : new Uint8Array(N);
@@ -177,18 +176,33 @@ export const terrain: Stage = {
     // Pass 1, without river and ponds, sets their source/surface levels from the land around them.
     const p1 = pinBase();
     const base1 = solveHarmonic(g, p1.pinned, p1.values);
-    const sourceSurface = layout.river ? round(Math.max(5, at(g, base1, layout.river.course[0]))) : 0;
+    // River surface: never above the land it runs through. Walking downstream, it is the
+    // lowest ground met so far (minus a margin), capped below any flat it passes, and 0 at
+    // the coast. (A straight linear descent ignored the land and left rivers perched
+    // tens of metres above the flats beside them.)
+    let profile: number[] = [];
+    if (layout.river) {
+      const caps = layout.flats.map((f, n) => ({ zone: offsetPolygons(f, s.riverWidth / 2 + 24), cap: elevations[n] - 1 }));
+      let running = Infinity;
+      profile = layout.river.course.map(p => {
+        let v = at(g, base1, p) - 1.5;
+        for (const c of caps) if (containsPoint(c.zone, p)) v = Math.min(v, c.cap);
+        running = Math.min(running, v);
+        return round(Math.max(0, running));
+      });
+      if (layout.sea) profile[profile.length - 1] = 0;
+    }
+    const sourceSurface = profile[0] ?? 0;
+    // Pond level: the lowest point of its rim, so it can't spill over the downhill side.
     const pondSurfaces = layout.ponds.map(p => {
-      const bb = bounds(p);
-      return round(Math.max(MIN_LAND + POND_DEPTH, at(g, base1, [(bb.minX + bb.maxX) / 2, (bb.minZ + bb.maxZ) / 2])));
+      const rim = Math.min(...p[0][0].map(pt => at(g, base1, pt)));
+      return round(Math.max(MIN_LAND + POND_DEPTH, rim - BANK));
     });
 
     // Pass 2, everything pinned.
     const { pinned, values } = pinBase();
-    if (layout.river) {
-      const frac = courseFraction(g, riverM, layout.river.course);
-      riverM.forEach((v, k) => { if (v && !seaM[k]) { pinned[k] = 1; values[k] = sourceSurface * (1 - frac[k]) - RIVER_DEPTH; } });
-    }
+    const riverIdx = layout.river ? nearestCourseIndex(g, riverM, layout.river.course) : new Int32Array(N).fill(-1);
+    riverM.forEach((v, k) => { if (v && !seaM[k]) { pinned[k] = 1; values[k] = profile[riverIdx[k]] - RIVER_DEPTH; } });
     pondMs.forEach((m, n) => m.forEach((v, k) => { if (v) { pinned[k] = 1; values[k] = pondSurfaces[n] - POND_DEPTH; } }));
     const baseH = solveHarmonic(g, pinned, values);
 
@@ -206,6 +220,23 @@ export const terrain: Stage = {
     for (let k = 0; k < N; k++) {
       h[k] = pinned[k] && !onEdge(k) ? baseH[k] : baseH[k] + noise[k] * amp * smoothstep(0, FADE, fromFeature[k]);
       if (!waterM[k] && h[k] < MIN_LAND) h[k] = MIN_LAND;
+    }
+    // Banks: land within two grid steps of a river or pond stays above its surface.
+    const flatAny = new Uint8Array(N);
+    for (const m of flatMs) m.forEach((v, k) => { if (v) flatAny[k] = 1; });
+    const surf = new Float32Array(N).fill(NaN);
+    riverM.forEach((v, k) => { if (v && !seaM[k]) surf[k] = profile[riverIdx[k]]; });
+    pondMs.forEach((m, n) => m.forEach((v, k) => { if (v) surf[k] = pondSurfaces[n]; }));
+    for (let k = 0; k < N; k++) {
+      if (Number.isNaN(surf[k])) continue;
+      const i = k % g.cols, j = Math.floor(k / g.cols);
+      for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= g.cols || jj >= g.rows) continue;
+        const kk = jj * g.cols + ii;
+        if (waterM[kk] || flatAny[kk]) continue;
+        if (h[kk] < surf[k] + BANK) h[kk] = surf[k] + BANK;
+      }
     }
 
     // Division into regions.
@@ -229,13 +260,40 @@ export const terrain: Stage = {
       .map(poly => poly.map(ring => simplify(ring, 2)));
     let hills = steepPolys.length ? intersect(rest, union(steepPolys, [])) : [];
     let slope = difference(rest, hills);
-    // Merge specks into the other kind (whole pieces move, so the partition holds).
-    const small = (mp: MultiPolygon) => mp.filter(p => area([p]) < SPECK);
-    const big = (mp: MultiPolygon) => mp.filter(p => area([p]) >= SPECK);
-    slope = union(slope, small(hills));
-    hills = big(hills);
-    hills = union(hills, small(slope));
-    slope = big(slope);
+    // Specks: merge each piece under SPECK into the touching slope/hills piece it shares the
+    // most boundary with (whole pieces move, so the partition holds). Pieces under 1 m² with
+    // no neighbour are Clipper noise and are dropped; other isolated specks remain.
+    // A merged region may hold several polygons: Clipper can leave a hair-width gap between
+    // pieces that share an edge, so their union comes back as two polygons.
+    type Piece = { kind: 'slope' | 'hills'; mp: MultiPolygon; a: number };
+    let pieces: Piece[] = [
+      ...slope.map((p: Polygon) => ({ kind: 'slope' as const, mp: [p], a: area([p]) })),
+      ...hills.map((p: Polygon) => ({ kind: 'hills' as const, mp: [p], a: area([p]) })),
+    ];
+    for (let merged = true; merged;) {
+      merged = false;
+      for (const sp of [...pieces].sort((x, y) => x.a - y.a)) {
+        if (sp.a >= SPECK) break;
+        const grown = offsetPolygons(sp.mp, 0.5);
+        let best: Piece | null = null, shared = 0.01;
+        for (const o of pieces) {
+          if (o === sp) continue;
+          const sh = area(intersect(grown, o.mp));
+          if (sh > shared) { shared = sh; best = o; }
+        }
+        if (best) {
+          const u = union(best.mp, sp.mp);
+          best.mp = u;
+          best.a = area(u);
+          pieces = pieces.filter(pc => pc !== sp);
+          merged = true;
+          break;
+        }
+        if (sp.a < 1) { pieces = pieces.filter(pc => pc !== sp); merged = true; break; }
+      }
+    }
+    const slopeRegions = pieces.filter(pc => pc.kind === 'slope').map(pc => pc.mp);
+    const hillsRegions = pieces.filter(pc => pc.kind === 'hills').map(pc => pc.mp);
 
     const out: RegionNode[] = [];
     const node = (name: string, kind: string, footprint: MultiPolygon, attrs: RegionNode['attrs'], extra?: RegionNode['data']): RegionNode => ({
@@ -244,13 +302,13 @@ export const terrain: Stage = {
     });
     if (layout.sea && area(layout.sea) > 0) out.push(node('sea', 'sea', layout.sea, { water: 'salt', flow: 'still', surface: 0 }));
     if (layout.river && area(layout.river.polygon) > 0) {
-      out.push(node('river', 'river', layout.river.polygon, { water: 'fresh', flow: 'flowing', width: s.riverWidth, sourceSurface, mouthSurface: 0 },
-        { course: layout.river.course }));
+      out.push(node('river', 'river', layout.river.polygon, { water: 'fresh', flow: 'flowing', width: s.riverWidth, sourceSurface, mouthSurface: profile[profile.length - 1] },
+        { course: layout.river.course, profile }));
     }
     layout.ponds.forEach((p, n) => out.push(node(`pond:${n}`, 'pond', p, { water: 'fresh', flow: 'still', surface: pondSurfaces[n] })));
     layout.flats.forEach((f, n) => out.push(node(`flat:${n}`, 'flat', f, { elevation: elevations[n] })));
-    slope.forEach((p, n) => out.push(node(`slope:${n}`, 'slope', [p], stats(g, h, steep, [p]))));
-    hills.forEach((p, n) => out.push(node(`hills:${n}`, 'hills', [p], stats(g, h, steep, [p]))));
+    slopeRegions.forEach((mp, n) => out.push(node(`slope:${n}`, 'slope', mp, stats(g, h, steep, mp))));
+    hillsRegions.forEach((mp, n) => out.push(node(`hills:${n}`, 'hills', mp, stats(g, h, steep, mp))));
 
     children.set(site.id, out);
     data.set(site.id, {

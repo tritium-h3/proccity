@@ -62,6 +62,9 @@ function checkNode(v: unknown, path: string) {
       if (!Array.isArray(v.data.course)) fail(`${path}.data.course`, 'should be an array of points');
       v.data.course.forEach((p: unknown, i: number) => checkPoint(p, `${path}.data.course[${i}]`));
     }
+    if (v.data.profile !== undefined) {
+      if (!Array.isArray(v.data.profile) || !v.data.profile.every((x: unknown) => typeof x === 'number')) fail(`${path}.data.profile`, 'should be an array of numbers');
+    }
     if (v.data.stats !== undefined) {
       if (!isObj(v.data.stats) || !Object.values(v.data.stats).every(x => typeof x === 'number')) fail(`${path}.data.stats`, 'should map names to numbers');
     }

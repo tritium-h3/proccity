@@ -52,13 +52,19 @@ export function blob(centre: Point2, radius: number, rng: () => number, irregula
   return union([[ring]], []); // normalise orientation
 }
 
-function midpointDisplace(a: Point2, b: Point2, depth: number, amp: number, rng: () => number): Point2[] {
+/** Meander by recursive midpoint displacement. A displaced point that `ok` rejects (e.g. it
+ *  would swing the course into the sea before its mouth) is retried with half the offset. */
+function midpointDisplace(a: Point2, b: Point2, depth: number, amp: number, rng: () => number, ok: (p: Point2) => boolean): Point2[] {
   if (depth === 0) return [a, b];
   const dx = b[0] - a[0], dz = b[1] - a[1];
-  const len = Math.hypot(dx, dz);
-  const off = (rng() - 0.5) * 2 * amp * len;
-  const mid: Point2 = [(a[0] + b[0]) / 2 - (dz / len) * off, (a[1] + b[1]) / 2 + (dx / len) * off];
-  return [...midpointDisplace(a, mid, depth - 1, amp, rng).slice(0, -1), ...midpointDisplace(mid, b, depth - 1, amp, rng)];
+  const len = Math.hypot(dx, dz) || 1;
+  let off = (rng() - 0.5) * 2 * amp * len;
+  let mid: Point2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  for (let t = 0; t < 4; t++, off /= 2) {
+    const cand: Point2 = [(a[0] + b[0]) / 2 - (dz / len) * off, (a[1] + b[1]) / 2 + (dx / len) * off];
+    if (ok(cand)) { mid = cand; break; }
+  }
+  return [...midpointDisplace(a, mid, depth - 1, amp, rng, ok).slice(0, -1), ...midpointDisplace(mid, b, depth - 1, amp, rng, ok)];
 }
 
 function extend(p: Point2, from: Point2, by: number): Point2 {
@@ -113,11 +119,17 @@ export function layoutTerrain(i: LayoutInput): Layout {
       src = a[0] === 0 ? [off(), a[1]] : [a[0], off()];
       mouth = b[0] === 0 ? [off(), b[1]] : [b[0], off()];
     }
-    const course = chaikin(midpointDisplace(src, mouth, 5, 0.35 * i.meander, rng), 3);
+    // Stay out of the sea (with a margin) until the mouth.
+    const seaMargin = sea ? offsetPolygons(sea, i.riverWidth) : null;
+    const onLand = (p: Point2) => !seaMargin || !containsPoint(seaMargin, p);
+    const course = chaikin(midpointDisplace(src, mouth, 5, 0.35 * i.meander, rng, onLand), 3);
     // Extend past both ends so the band reaches the site edge and runs into the sea.
     const banded = [extend(course[0], course[1], i.riverWidth), ...course, extend(course[course.length - 1], course[course.length - 2], i.riverWidth)];
     let polygon = intersect(offsetPolyline(banded, i.riverWidth / 2), site);
     if (sea) polygon = difference(polygon, sea);
+    // One river: keep the main piece; stray bits (a mouth extension poking through a coastal
+    // bulge, a bend clipped by the sea) are left to the land.
+    if (polygon.length > 1) polygon = [polygon.reduce((best, p) => (area([p]) > area([best]) ? p : best))];
     river = { polygon, course };
   }
 

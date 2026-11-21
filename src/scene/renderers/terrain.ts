@@ -28,19 +28,22 @@ function surface(mp: MultiPolygon, y: (p: Point2) => number): number[] {
   return pos;
 }
 
-/** River surface: linear in arc length from sourceSurface to mouthSurface, at the nearest course point. */
-function riverSurface(river: RegionNode): (p: Point2) => number {
+/** River surface at a point: the stored profile at the nearest course point. */
+export function riverSurface(river: RegionNode): (p: Point2) => number {
   const course = river.data?.course ?? [];
-  const src = Number(river.attrs.sourceSurface ?? 0), mouth = Number(river.attrs.mouthSurface ?? 0);
-  const cum = [0];
-  for (let i = 1; i < course.length; i++) cum.push(cum[i - 1] + Math.hypot(course[i][0] - course[i - 1][0], course[i][1] - course[i - 1][1]));
-  const L = cum[cum.length - 1] || 1;
+  const profile = river.data?.profile ?? [];
   return p => {
     let best = 0, bd = Infinity;
     course.forEach((q, i) => { const d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2; if (d < bd) { bd = d; best = i; } });
-    const t = cum[best] / L;
-    return src + (mouth - src) * t;
+    return profile[best] ?? 0;
   };
+}
+
+/** The water surface over a water region at a point, or null for land. */
+export function waterSurfaceAt(node: RegionNode): ((p: Point2) => number) | null {
+  if (node.kind === 'river') return riverSurface(node);
+  if (node.kind === 'sea' || node.kind === 'pond') return () => Number(node.attrs.surface ?? 0);
+  return null;
 }
 
 export const renderTerrain: StageRenderer = (nodes, ctx) => {
@@ -82,7 +85,7 @@ export const renderTerrain: StageRenderer = (nodes, ctx) => {
 
   const waterMeshes: THREE.Mesh[] = [];
   for (const n of nodes.filter(nn => WATER_KINDS.has(nn.kind))) {
-    const y = n.kind === 'river' ? riverSurface(n) : () => Number(n.attrs.surface ?? 0);
+    const y = waterSurfaceAt(n)!;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(surface(n.geometry.footprint, y), 3));
     g.computeVertexNormals();
