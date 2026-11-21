@@ -90,7 +90,8 @@ export function layoutTerrain(i: LayoutInput): Layout {
       localCoast.push([u, v0 + n * amp]);
     }
     coastline = localCoast.map(toWorld);
-    const ring: Point2[] = [...localCoast, [h + 50, h + 100], [-h - 50, h + 100]].map(toWorld);
+    const corners: Point2[] = [[h + 50, h + 100], [-h - 50, h + 100]];
+    const ring: Point2[] = [...localCoast, ...corners].map(toWorld);
     sea = intersect(union([[ring]], []), site);
   }
 
