@@ -31,7 +31,12 @@ export function constrainedSurface(
     }
   }
   const boundaryCount = points.length;
-  for (const [x, z, y] of interior) if (containsPoint(footprint, [x, z])) add(x, z, y);
+  // Interior points must be strictly inside: one lying on a boundary edge (a cell corner on
+  // a region's edge) makes the constrainer reject the edge and lose all interior detail.
+  for (const [x, z, y] of interior) {
+    if (index.has(vkey([x, z]))) continue;
+    if (containsPoint(footprint, [x, z]) && distanceToBoundary(footprint, [x, z]) > 0.05) add(x, z, y);
+  }
 
   const keep = (tri: number[]): boolean => {
     const cx = (points[tri[0]][0] + points[tri[1]][0] + points[tri[2]][0]) / 3;
@@ -63,4 +68,17 @@ export function constrainedSurface(
     }
     return { points: points.slice(0, boundaryCount), triangles };
   }
+}
+
+function distanceToBoundary(mp: MultiPolygon, p: Point2): number {
+  let best = Infinity;
+  for (const poly of mp) for (const ring of poly) {
+    for (let i = 0; i < ring.length; i++) {
+      const [ax, az] = ring[i], [bx, bz] = ring[(i + 1) % ring.length];
+      const dx = bx - ax, dz = bz - az;
+      const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - az) * dz) / (dx * dx + dz * dz || 1)));
+      best = Math.min(best, Math.hypot(p[0] - (ax + dx * t), p[1] - (az + dz * t)));
+    }
+  }
+  return best;
 }

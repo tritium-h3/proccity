@@ -90,8 +90,9 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     } else {
       e = inc.reduce((s, i) => s + base[i], 0) / inc.length;
     }
-    if (bank && containsPoint(bank, p)) e = Math.max(e, surfaceAt(p) + 0.5);
-    if (shore && containsPoint(shore, p)) e = Math.max(e, 0.5);
+    // Only vertices of water-touching cells can lie on a bank or the shore.
+    if (bank && inc.some(i => cells[i].touchesRiver) && containsPoint(bank, p)) e = Math.max(e, surfaceAt(p) + 0.5);
+    if (shore && inc.some(i => cells[i].touchesSea) && containsPoint(shore, p)) e = Math.max(e, 0.5);
     vertex.set(k, e);
   }
 

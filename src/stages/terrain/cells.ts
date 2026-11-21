@@ -76,7 +76,7 @@ export function buildCells(
   const v = voronoi(seeds);
 
   // Clip each Voronoi cell to the land; every resulting piece is its own cell.
-  type Piece = { seed: Point2; poly: Polygon; area: number };
+  type Piece = { seed: Point2; poly: Polygon; area: number; origin: number };
   let pieces: Piece[] = [];
   seeds.forEach((s, i) => {
     const ring = v.cellPolygon(i);
@@ -85,7 +85,7 @@ export function buildCells(
     for (const poly of clipped) {
       const a = area([poly]);
       if (a <= 0) continue;
-      pieces.push({ seed: containsPoint([poly], s) ? s : interiorPoint(poly), poly, area: a });
+      pieces.push({ seed: containsPoint([poly], s) ? s : interiorPoint(poly), poly, area: a, origin: i });
     }
   });
 
@@ -112,19 +112,34 @@ export function buildCells(
     pieces = pieces.filter((_, j) => j !== idx);
   }
 
-  // Neighbour graph by shared edge length.
+  // Neighbour graph by shared edge length. Only pieces of the same seed or of Delaunay-adjacent
+  // seeds can touch, so only those pairs are measured (the all-pairs check dominated the stage).
   const bb = bboxes();
   const neighbours: number[][] = pieces.map(() => []);
-  for (let i = 0; i < pieces.length; i++) {
-    for (let j = i + 1; j < pieces.length; j++) {
+  const bySeed = new Map<number, number[]>();
+  pieces.forEach((p, i) => bySeed.set(p.origin, [...(bySeed.get(p.origin) ?? []), i]));
+  const delaunay = v.delaunay;
+  const seen = new Set<string>();
+  pieces.forEach((p, i) => {
+    const seedsNear = [p.origin, ...delaunay.neighbors(p.origin)];
+    for (const sn of seedsNear) for (const j of bySeed.get(sn) ?? []) {
+      if (j <= i) continue;
+      const key = `${i},${j}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       if (!near(bb, i, j)) continue;
       if (shared([pieces[i].poly], [pieces[j].poly]) > 1) { neighbours[i].push(j); neighbours[j].push(i); }
     }
-  }
+  });
+  const waterBox = (w: MultiPolygon | null) => (w && w.length ? bounds(w) : null);
+  const seaBox = waterBox(sea), riverBox = waterBox(river);
+  const boxNear = (b1: ReturnType<typeof bounds>, b2: ReturnType<typeof bounds> | null) =>
+    !!b2 && b1.minX <= b2.maxX + 2 && b2.minX <= b1.maxX + 2 && b1.minZ <= b2.maxZ + 2 && b2.minZ <= b1.maxZ + 2;
 
   const cells: Cell[] = pieces.map((p, id) => ({
     id, seed: p.seed, poly: p.poly, area: p.area, neighbours: neighbours[id],
-    touchesSea: touches(p.poly, sea), touchesRiver: touches(p.poly, river),
+    touchesSea: boxNear(bb[id], seaBox) && touches(p.poly, sea),
+    touchesRiver: boxNear(bb[id], riverBox) && touches(p.poly, river),
     hop: Infinity, nearest: 'none',
   }));
 
