@@ -326,3 +326,27 @@ describe('no flat fins (found in the browser)', () => {
     }
   }, 60_000);
 });
+
+describe('rounded ponds (polygonal shorelines seen in the browser)', () => {
+  it('has no sharp corner on any pond outline', () => {
+    const turn = (ring: number[][], i: number) => {
+      const a = ring[(i + ring.length - 1) % ring.length], b = ring[i], c = ring[(i + 1) % ring.length];
+      let d = Math.abs(Math.atan2(c[1] - b[1], c[0] - b[0]) - Math.atan2(b[1] - a[1], b[0] - a[0])) * 180 / Math.PI;
+      return d > 180 ? 360 - d : d;
+    };
+    // Cell outlines made almost every pond vertex a corner; now only the tips of narrow
+    // fingers turn sharply.
+    let ponds = 0, vertices = 0, sharp = 0;
+    for (const [irregularity, seed] of [[0, 1], [0.5, 1], [0.5, 2], [1, 3]] as const) {
+      const r = run({ irregularity, ponds: 4 }, seed);
+      for (const p of r.children.filter(c => c.kind === 'pond')) {
+        ponds++;
+        const ring = p.geometry.footprint[0][0];
+        vertices += ring.length;
+        sharp += ring.filter((_, i) => turn(ring, i) > 30).length;
+      }
+    }
+    expect(sharp / vertices).toBeLessThan(0.05);
+    expect(ponds).toBeGreaterThan(4);
+  }, 60_000);
+});

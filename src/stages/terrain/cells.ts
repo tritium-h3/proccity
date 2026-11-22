@@ -47,7 +47,7 @@ function centroid(ring: Point2[]): Point2 {
 }
 
 /** A point inside the polygon: its centroid if inside, else the midpoint of a vertex-to-centroid chord. */
-function interiorPoint(poly: Polygon): Point2 {
+export function interiorPoint(poly: Polygon): Point2 {
   const c = centroid(poly[0]);
   if (containsPoint([poly], c)) return c;
   for (const v of poly[0]) {

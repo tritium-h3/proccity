@@ -24,31 +24,29 @@ Render-time smoothing can't round it.
 
 ## Design
 
-`stages/terrain/ponds.ts`, `roundPonds(cells, isPond, radius)`, runs after classification
-and before elevations, so elevations and ground meshes are built on the rounded cells.
+`stages/terrain/ponds.ts`, `roundPonds(cells, isPond, sigma)`, runs after classification and
+before elevations, with `sigma` set to 0.25 × `cellSize`. It takes four steps:
 
-For each vertex V on a pond outline:
+1. **Find the shoreline.** A shoreline edge is a→b in a pond cell's ring whose reverse,
+   b→a, is in a land cell's ring.
+2. **Subdivide** every shoreline edge into pieces no longer than σ/2. Each new point is
+   inserted into both rings that share the edge.
+3. **Walk the shoreline** into closed loops. A vertex where a pond touches itself (two ways
+   on) stays where it is, and splits its loop into open chains whose ends are held.
+4. **Smooth.** Each vertex moves to a Gaussian average (σ) of its path's vertices. The
+   average is taken by arc length and weighted by the length each vertex stands for, so
+   uneven spacing doesn't bias it. A vertex moves in **every** ring that holds it, which
+   keeps the partition exact by construction. A move is refused, retried at half and then a
+   quarter of the distance, or skipped, if it would fold a cell or cross an edge. A fold is
+   when the cells around the vertex no longer fan exactly once around it.
 
-- **Which side gets the curve:** the two *boundary rays* from V separate pond cells from
-  land cells. The *inner* side is the one whose angle is under 180°: the pond at a convex
-  corner, the land at a concave one. Corners within 10° of straight are left alone.
-- **The curve:** a fillet of radius `radius`, a quarter of `cellSize`. Its tangent
-  distance is clamped to 0.4 of the shortest edge at V. The curve is a quadratic Bézier
-  with V as the control point, so it stays inside the corner triangle, and seen from V its
-  direction sweeps steadily from one ray to the other.
-- **Inner cells:** every cell on the inner side replaces V in its ring with the part of the
-  curve inside its own sector. Any other ray from V on that side (a seam between two pond
-  cells, or between two land cells) crosses the curve exactly once. That crossing point
-  goes into both cells sharing the ray.
-- **Outer cells:** the two outer cells along the boundary rays take the cut-off wedge,
-  split at the curve's midpoint M. Each keeps V and gains the segment V–M. If a single
-  outer cell spans both rays, it takes the whole wedge and drops V. Outer cells in between
-  are untouched.
+Moves are local, so the neighbour graph is left as it was. Ponds never touch water, the site
+edge or another pond. Their shorelines only move into cells that already touch them, so a
+pond can't come to touch any of those either.
 
-Each change is local to a disc around V that's smaller than any edge at V. Ponds never
-touch water, the site edge or another pond, so a rounded pond can't come into contact with
-any of them either. Neighbour graphs are left as they were: the only new contacts are
-between cells that already met at V.
+Rounded ponds have narrow fingers that the 25 m grid of bed points misses. The pond's
+ground therefore gets an extra ring of bed points 4 m inside the shore, every 8 m.
+Otherwise a triangle joining only bank points could leave land standing above the water.
 
 ## Rejected
 
@@ -58,3 +56,6 @@ between cells that already met at V.
 - **Clipper offsets in and out with round joins.** This rounds corners robustly, but
   straight edges come back about 1 mm off the originals, which leaves long slivers against
   the neighbouring cells.
+- **Filleting each corner by ring surgery.** This was implemented and tested first. Corner
+  snapping leaves Voronoi corners with edges about a metre long, which capped the fillets
+  at a metre, so those corners still looked sharp from any distance.

@@ -5,7 +5,7 @@
 
 import { childId } from '../../doc/tree.js';
 import type { GroundSurface, MultiPolygon, Point2, Polygon, RegionNode, Settings } from '../../doc/types.js';
-import { difference, union } from '../../grammar/clipper.js';
+import { difference, offsetPolygons, union } from '../../grammar/clipper.js';
 import { area, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
 import type { Stage } from '../types.js';
@@ -13,6 +13,7 @@ import { buildCells, vkey } from './cells.js';
 import { computeLevels, riverSurfaceAt } from './elevation.js';
 import { constrainedSurface } from './ground.js';
 import { classify, mergeRegions } from './rules.js';
+import { roundPonds } from './ponds.js';
 import { layoutWater, riverProfile, type Shore } from './water.js';
 
 const SEA_DEPTH = 15;
@@ -29,6 +30,20 @@ function bedPoints(fp: MultiPolygon, spacing: number, elevation: (p: Point2) => 
   for (let x = x0 + spacing / 2; x < x1; x += spacing) {
     for (let z = z0 + spacing / 2; z < z1; z += spacing) {
       if (containsPoint(fp, [x, z])) out.push([x, z, elevation([x, z])]);
+    }
+  }
+  return out;
+}
+/** Bed points along a ring `inset` metres inside a water footprint, every `spacing` metres:
+ *  the grid misses narrow fingers of a rounded pond, where triangles joining only bank points
+ *  left land standing above the water. */
+function insetBedPoints(fp: MultiPolygon, inset: number, spacing: number, elevation: number): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  for (const poly of offsetPolygons(fp, -inset)) for (const ring of poly) {
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      const n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / spacing));
+      for (let k = 0; k < n; k++) out.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, elevation]);
     }
   }
   return out;
@@ -134,6 +149,9 @@ export const terrain: Stage = {
     const cells = buildCells(land, footprint, water.sea, water.river?.polygon ?? null, s.cellSize, rng, s.irregularity);
     const classified = classify(cells, { flatWidth: s.flatWidth, hilliness: s.hilliness, ponds: s.ponds, pondSize: s.pondSize }, rng);
     const groups = mergeRegions(cells, classified);
+    // Ponds get curved shorelines (cell edges made them very polygonal), before elevations so
+    // levels and ground meshes are built on the rounded cells.
+    roundPonds(cells, i => classified.kind[i] === 'pond', 0.25 * s.cellSize);
 
     // Near the coast the land's level is fixed (coastal flats at 2 m + 1 per hop, the shore
     // band at 0.5 m), so the river must come down to meet it: cap the surface 0.5 m below any
@@ -253,7 +271,7 @@ export const terrain: Stage = {
       };
       if (g.kind === 'pond') {
         const surface = levels.pondSurface[g.cells[0]]!;
-        interior.push(...bedPoints(fp, 25, () => surface - POND_DEPTH));
+        interior.push(...bedPoints(fp, 25, () => surface - POND_DEPTH), ...insetBedPoints(fp, 4, 8, surface - POND_DEPTH));
       }
       const ground = constrainedSurface(fp, p => vertexElevation(p) ?? fallback(p), interior);
       const name = `${g.kind}:${counters[g.kind]++}`;
