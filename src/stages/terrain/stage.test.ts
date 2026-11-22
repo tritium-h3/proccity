@@ -223,3 +223,49 @@ describe('terrain v2 review fixes', () => {
     throw new Error('no river flat with a raised minimum in seeds 1–6');
   });
 });
+
+describe('no land strips inside water (found in the browser)', () => {
+  const distToEdge = (fp: RegionNode['geometry']['footprint'], x: number, z: number) => {
+    let best = Infinity;
+    for (const poly of fp) for (const ring of poly) for (let i = 0; i < ring.length; i++) {
+      const [ax, az] = ring[i], [bx, bz] = ring[(i + 1) % ring.length];
+      const dx = bx - ax, dz = bz - az;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+      best = Math.min(best, Math.hypot(x - (ax + dx * t), z - (az + dz * t)));
+    }
+    return best;
+  };
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    it(`keeps every triangle away from the shore under the water (seed ${seed})`, () => {
+      const r = run({ ponds: 3, pondSize: 6 }, seed);
+      const river = r.children.find(c => c.kind === 'river');
+      for (const w of r.children.filter(c => WATER.has(c.kind))) {
+        const g = w.data!.ground!;
+        for (const [i, j, k] of g.triangles) {
+          const cx = (g.points[i][0] + g.points[j][0] + g.points[k][0]) / 3;
+          const cz = (g.points[i][1] + g.points[j][1] + g.points[k][1]) / 3;
+          if (distToEdge(w.geometry.footprint, cx, cz) < 3) continue;
+          const cy = (g.points[i][2] + g.points[j][2] + g.points[k][2]) / 3;
+          const surface = w.kind === 'river' ? riverSurfaceAt(river!.data!.course!, river!.data!.profile!, [cx, cz]) : (w.attrs.surface as number);
+          expect(cy, `${w.id} at (${cx.toFixed(0)}, ${cz.toFixed(0)})`).toBeLessThan(surface);
+        }
+      }
+    });
+  }
+
+  it('keeps points shared by the river and the sea under the water', () => {
+    for (const seed of [1, 2, 3, 4]) {
+      const r = run({}, seed);
+      const river = r.children.find(c => c.kind === 'river'), sea = r.children.find(c => c.kind === 'sea');
+      if (!river || !sea) continue;
+      const k = (p: number[]) => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`;
+      const seaPts = new Map(sea.data!.ground!.points.map(p => [k(p), p[2]]));
+      const land = new Set(r.children.filter(c => !WATER.has(c.kind)).flatMap(c => c.data!.ground!.points.map(k)));
+      for (const p of river.data!.ground!.points) {
+        if (!seaPts.has(k(p)) || land.has(k(p))) continue;
+        expect(p[2]).toBeLessThanOrEqual(0);
+        expect(seaPts.get(k(p))!).toBeCloseTo(p[2], 6);
+      }
+    }
+  });
+});

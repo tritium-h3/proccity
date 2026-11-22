@@ -17,6 +17,22 @@ import { layoutWater, riverProfile, type Shore } from './water.js';
 
 const SEA_DEPTH = 15;
 const RIVER_DEPTH = 3;
+const POND_DEPTH = 2;
+
+/** Bed points on a grid inside a water footprint. Without them the triangulation can span a
+ *  pond or river from bank to bank using only bank-height points, leaving a ridge above
+ *  the water (seen as a land strip across a multi-cell pond, or at the river mouth). */
+function bedPoints(fp: MultiPolygon, spacing: number, elevation: (p: Point2) => number): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  const xs = fp.flat(2).map(p => p[0]), zs = fp.flat(2).map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  for (let x = x0 + spacing / 2; x < x1; x += spacing) {
+    for (let z = z0 + spacing / 2; z < z1; z += spacing) {
+      if (containsPoint(fp, [x, z])) out.push([x, z, elevation([x, z])]);
+    }
+  }
+  return out;
+}
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
 function distToLine(p: Point2, line: Point2[]): number {
@@ -158,19 +174,50 @@ export const terrain: Stage = {
       data, dataStage: Object.fromEntries(Object.keys(data).map(k => [k, 'terrain'])),
     });
 
-    if (water.sea && area(water.sea) > 0) {
-      const coast = water.coastline!;
-      const ground = constrainedSurface(water.sea, p => vertexElevation(p) ?? -SEA_DEPTH * Math.min(1, distToLine(p, coast) / (0.15 * size)), []);
-      out.push(node('sea', 'sea', water.sea, { water: 'salt', flow: 'still', surface: 0 }, { ground }));
-    }
+    // River first: the sea reuses the river's bed heights for the points they share at the
+    // mouth, so the two meet below the water instead of at bank height.
+    const riverEdge = new Map<string, number>();
+    let riverNode: RegionNode | null = null;
     if (water.river && course && profile && area(water.river.polygon) > 0) {
       const surf = (p: Point2) => riverSurfaceAt(course, profile, p);
-      const bed: [number, number, number][] = course.map((p, i) => [p[0], p[1], profile[i] - RIVER_DEPTH]);
-      const ground = constrainedSurface(water.river.polygon, p => vertexElevation(p) ?? surf(p) + 0.5, bed);
-      out.push(node('river', 'river', water.river.polygon,
+      const bedAt = (p: Point2) => surf(p) - RIVER_DEPTH;
+      const bed: [number, number, number][] = [
+        ...course.map((p, i): [number, number, number] => [p[0], p[1], profile[i] - RIVER_DEPTH]),
+        ...bedPoints(water.river.polygon, 25, bedAt),
+      ];
+      // Edge points that aren't land corners border water (the sea at the mouth): bed, not bank.
+      const ground = constrainedSurface(water.river.polygon, p => {
+        const v = vertexElevation(p);
+        if (v !== undefined) return v;
+        const e = bedAt(p);
+        riverEdge.set(vkey(p), e);
+        return e;
+      }, bed);
+      riverNode = node('river', 'river', water.river.polygon,
         { water: 'fresh', flow: 'flowing', width: s.riverWidth, sourceSurface: profile[0], mouthSurface: profile[profile.length - 1] },
-        { ground, course, profile }));
+        { ground, course, profile });
     }
+    if (water.sea && area(water.sea) > 0) {
+      const coast = water.coastline!;
+      const depth = (p: Point2) => -SEA_DEPTH * Math.min(1, distToLine(p, coast) / (0.15 * size));
+      // The bed shelves: at least 2 m down off the coast (a line of points 10 m out), so no
+      // triangle between shore points and a barely-submerged bed point pokes above the sea.
+      const shelf: [number, number, number][] = [];
+      for (let k = 1; k + 1 < coast.length; k++) {
+        const [ax, az] = coast[k - 1], [bx, bz] = coast[k + 1];
+        const len = Math.hypot(bx - ax, bz - az) || 1;
+        const nx = -(bz - az) / len, nz = (bx - ax) / len;
+        for (const sgn of [1, -1]) {
+          const q: Point2 = [coast[k][0] + nx * 10 * sgn, coast[k][1] + nz * 10 * sgn];
+          if (containsPoint(water.sea, q)) { shelf.push([q[0], q[1], -2]); break; }
+        }
+      }
+      const bed = (p: Point2) => Math.min(-2, depth(p));
+      const ground = constrainedSurface(water.sea, p => vertexElevation(p) ?? riverEdge.get(vkey(p)) ?? depth(p),
+        [...shelf, ...bedPoints(water.sea, 90, bed)]);
+      out.push(node('sea', 'sea', water.sea, { water: 'salt', flow: 'still', surface: 0 }, { ground }));
+    }
+    if (riverNode) out.push(riverNode);
 
     const counters = { flat: 0, slope: 0, hills: 0, pond: 0 };
     for (const [gi, g] of groups.entries()) {
@@ -187,6 +234,10 @@ export const terrain: Stage = {
         for (const q of interior) { const d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2; if (d < bd) { bd = d; best = q[2]; } }
         return best;
       };
+      if (g.kind === 'pond') {
+        const surface = levels.pondSurface[g.cells[0]]!;
+        interior.push(...bedPoints(fp, 25, () => surface - POND_DEPTH));
+      }
       const ground = constrainedSurface(fp, p => vertexElevation(p) ?? fallback(p), interior);
       const name = `${g.kind}:${counters[g.kind]++}`;
       if (g.kind === 'pond') {
