@@ -42,7 +42,7 @@ function pick(weights: Partial<Record<LandKind, number>>, rng: () => number): La
 
 export interface Classified { kind: CellKind[]; flatType: (FlatType | null)[] }
 
-export function classify(cells: Cell[], o: { flatWidth: number; hilliness: number; ponds: number }, rng: () => number): Classified {
+export function classify(cells: Cell[], o: { flatWidth: number; hilliness: number; ponds: number; pondSize?: number }, rng: () => number): Classified {
   // 1. The rule table.
   let kind: CellKind[] = cells.map(cell => {
     const ctx = { cell, flatWidth: o.flatWidth, hilliness: o.hilliness };
@@ -72,18 +72,36 @@ export function classify(cells: Cell[], o: { flatWidth: number; hilliness: numbe
     cell.hop <= o.flatWidth && cell.nearest === 'sea' ? 'coastal'
       : cell.hop <= o.flatWidth && cell.nearest === 'river' ? 'river' : 'shelf';
 
-  // 4. Ponds: flat cells off the sea and river, never beside another pond.
-  const eligible = cells.filter((c, i) => kind[i] === 'flat' && !c.touchesSea && !c.touchesRiver).map(c => c.id);
-  for (let i = eligible.length - 1; i > 0; i--) {
+  // 4. Ponds: seed at an eligible cell, then grow into eligible neighbours up to a target
+  //    size around pondSize. Eligible = flat or slope, not touching the sea or river. A pond
+  //    never grows beside a different pond (touching ponds would logically be one).
+  const pondSize = o.pondSize ?? 1;
+  const owner = new Int32Array(cells.length).fill(-1); // pond index per cell
+  const eligible = (id: number) => (kind[id] === 'flat' || kind[id] === 'slope') && !cells[id].touchesSea && !cells[id].touchesRiver;
+  const besideOther = (id: number, pond: number) => cells[id].neighbours.some(n => owner[n] >= 0 && owner[n] !== pond);
+  const candidates = cells.filter(c => eligible(c.id)).map(c => c.id);
+  for (let i = candidates.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
-    [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
   }
   let placed = 0;
-  for (const id of eligible) {
+  for (const seed of candidates) {
     if (placed >= o.ponds) break;
-    if (cells[id].neighbours.some(n => kind[n] === 'pond')) continue;
-    kind[id] = 'pond';
-    placed++;
+    if (owner[seed] >= 0 || besideOther(seed, placed)) continue;
+    const pond = placed++;
+    const target = Math.max(1, Math.round(pondSize * (0.5 + rng())));
+    const members = [seed];
+    owner[seed] = pond;
+    while (members.length < target) {
+      const frontier = [...new Set(members.flatMap(m => cells[m].neighbours))]
+        .filter(n => owner[n] < 0 && eligible(n) && !besideOther(n, pond))
+        .sort((x, y) => x - y);
+      if (!frontier.length) break;
+      const next = frontier[Math.floor(rng() * frontier.length)];
+      owner[next] = pond;
+      members.push(next);
+    }
+    for (const m of members) kind[m] = 'pond';
   }
 
   const flatType = cells.map((c, i) => (kind[i] === 'flat' ? typeOf(c) : null));
@@ -92,7 +110,8 @@ export function classify(cells: Cell[], o: { flatWidth: number; hilliness: numbe
 
 export interface RegionGroup { kind: CellKind; flatType: FlatType | null; cells: number[] }
 
-/** Connected components of same-kind cells (flats also by subtype); each pond on its own. */
+/** Connected components of same-kind cells (flats also by subtype). Pond cells merge too;
+ *  separate ponds never touch, so each component is one pond. */
 export function mergeRegions(cells: Cell[], c: Classified): RegionGroup[] {
   const seen = new Uint8Array(cells.length);
   const groups: RegionGroup[] = [];
@@ -105,7 +124,6 @@ export function mergeRegions(cells: Cell[], c: Classified): RegionGroup[] {
     while (stack.length) {
       const id = stack.pop()!;
       members.push(id);
-      if (k === 'pond') continue;
       for (const n of cells[id].neighbours) {
         if (!seen[n] && c.kind[n] === k && c.flatType[n] === ft) { seen[n] = 1; stack.push(n); }
       }

@@ -225,6 +225,7 @@ All are open slabs with `data.ground`. The site gets `data.stats` (`pondsPlaced`
 | `riverWidth` | number | 10–120 m | 40 |
 | `flatWidth` | number | 0–5 hops | 2 |
 | `ponds` | number | 0–6 | 2 |
+| `pondSize` | number | 1–10 cells | 4 (added 2026-11-22; see `2026-11-22-pond-clusters-design.md`) |
 | `cellSize` | number | 60–250 m | 120 |
 
 Removed: `ruggedness` (now hilliness), `coastWiggle` and `meander` (handled by the shader),

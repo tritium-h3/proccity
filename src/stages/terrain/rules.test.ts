@@ -73,3 +73,46 @@ describe('terrain rules', () => {
     });
   });
 });
+
+describe('pond clusters', () => {
+  const pondGroups = (seed: number, pondSize: number, ponds = 3) => {
+    const c = classify(cells, { flatWidth: 2, hilliness: 0.5, ponds, pondSize }, createRng(seed));
+    return { c, groups: mergeRegions(cells, c).filter(g => g.kind === 'pond') };
+  };
+
+  it('grows ponds to several cells and merges each into one region', () => {
+    let total = 0, n = 0;
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      const { groups } = pondGroups(seed, 4);
+      for (const g of groups) {
+        total += g.cells.length; n++;
+        expect(g.cells.length).toBeLessThanOrEqual(6); // 1.5 × pondSize
+      }
+    }
+    expect(n).toBeGreaterThan(0);
+    expect(total / n).toBeGreaterThan(2);
+  });
+
+  it('keeps each pond connected, off the sea and river, and apart from other ponds', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const { c, groups } = pondGroups(seed, 6, 4);
+      const owner = new Map<number, number>();
+      groups.forEach((g, gi) => g.cells.forEach(ci => owner.set(ci, gi)));
+      groups.forEach((g, gi) => {
+        // connected: flood fill within the group reaches every cell
+        const inG = new Set(g.cells), seen = new Set([g.cells[0]]), stack = [g.cells[0]];
+        while (stack.length) for (const nb of cells[stack.pop()!].neighbours) if (inG.has(nb) && !seen.has(nb)) { seen.add(nb); stack.push(nb); }
+        expect(seen.size).toBe(g.cells.length);
+        for (const ci of g.cells) {
+          expect(cells[ci].touchesSea || cells[ci].touchesRiver).toBe(false);
+          expect(['flat', 'slope', 'pond']).toContain(c.kind[ci]);
+          for (const nb of cells[ci].neighbours) if (owner.has(nb)) expect(owner.get(nb)).toBe(gi);
+        }
+      });
+    }
+  });
+
+  it('stays single-cell at pondSize 1', () => {
+    for (const g of pondGroups(2, 1).groups) expect(g.cells).toHaveLength(1);
+  });
+});

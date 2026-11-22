@@ -73,6 +73,7 @@ export const terrain: Stage = {
     { key: 'riverWidth', label: 'River width', type: 'number', min: 10, max: 120, step: 5, default: 40, unit: 'm' },
     { key: 'flatWidth', label: 'Flat width', type: 'number', min: 0, max: 5, step: 1, default: 2, help: 'How many cells deep the coastal and river flats run' },
     { key: 'ponds', label: 'Ponds', type: 'number', min: 0, max: 6, step: 1, default: 2 },
+    { key: 'pondSize', label: 'Pond size', type: 'number', min: 1, max: 10, step: 1, default: 4, help: 'Roughly how many cells each pond grows to' },
     { key: 'cellSize', label: 'Cell size', type: 'number', min: 60, max: 250, step: 10, default: 120, unit: 'm', help: 'How finely the land is divided' },
   ],
   overridable: {
@@ -89,7 +90,7 @@ export const terrain: Stage = {
     const site = leaves.find(l => l.kind === 'site');
     if (!site) return { children: new Map() };
     const s = settings as Settings & { relief: number; hilliness: number; shore: Shore; river: boolean;
-      riverWidth: number; flatWidth: number; ponds: number; cellSize: number };
+      riverWidth: number; flatWidth: number; ponds: number; pondSize: number; cellSize: number };
     const footprint = site.geometry.footprint;
     const xs = footprint[0][0].map(p => p[0]);
     const size = Math.max(...xs) - Math.min(...xs);
@@ -102,7 +103,7 @@ export const terrain: Stage = {
 
     // 2–3. Cells, classification, regions.
     const cells = buildCells(land, footprint, water.sea, water.river?.polygon ?? null, s.cellSize, rng);
-    const classified = classify(cells, { flatWidth: s.flatWidth, hilliness: s.hilliness, ponds: s.ponds }, rng);
+    const classified = classify(cells, { flatWidth: s.flatWidth, hilliness: s.hilliness, ponds: s.ponds, pondSize: s.pondSize }, rng);
     const groups = mergeRegions(cells, classified);
 
     // Near the coast the land's level is fixed (coastal flats at 2 m + 1 per hop, the shore

@@ -69,13 +69,16 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     return shelfLevel.get(groupOf[i])!;
   });
 
-  // Ponds: half a metre below the lowest bordering cell's level.
+  // Ponds: one level per pond, half a metre below the lowest land cell around the whole pond.
   const levelOf = (i: number) => flatLevel[i] ?? base[i];
-  const pondSurface = cells.map((cell, i) => {
-    if (c.kind[i] !== 'pond') return null;
-    const around = cell.neighbours.filter(n => c.kind[n] !== 'pond').map(levelOf);
-    return Math.max(1, (around.length ? Math.min(...around) : base[i]) - 0.5);
-  });
+  const pondSurface: (number | null)[] = cells.map(() => null);
+  for (const g of groups) {
+    if (g.kind !== 'pond') continue;
+    const inPond = new Set(g.cells);
+    const around = [...new Set(g.cells.flatMap(ci => cells[ci].neighbours))].filter(n => !inPond.has(n)).map(levelOf);
+    const surface = Math.max(1, (around.length ? Math.min(...around) : Math.min(...g.cells.map(ci => base[ci]))) - 0.5);
+    for (const ci of g.cells) pondSurface[ci] = surface;
+  }
 
   // Vertex elevations.
   const incident = new Map<string, { p: Point2; cells: number[] }>();
@@ -98,7 +101,10 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     const flats = inc.map(i => flatLevel[i]).filter((v): v is number => v !== null);
     const ponds = inc.map(i => pondSurface[i]).filter((v): v is number => v !== null);
     let e: number;
-    if (flats.length || ponds.length) {
+    if (ponds.length && ponds.length === inc.length) {
+      // Shared only by pond cells: the pond's bed.
+      e = Math.min(...ponds) - 2;
+    } else if (flats.length || ponds.length) {
       // The lowest touching level, but never below any touching pond's bank.
       e = Math.min(...flats, ...ponds.map(s => s + 0.5));
       if (ponds.length) e = Math.max(e, Math.max(...ponds) + 0.5);

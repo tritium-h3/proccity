@@ -45,8 +45,9 @@ real stage is designed with the owner one at a time; districts come next.
   - `cells.ts`: Voronoi cells over the land (`d3-delaunay`) and a neighbour graph, including
     hop distance and nearest water.
   - `rules.ts`: `TERRAIN_RULES`, a declarative weighted rule table (a stochastic grammar),
-    then smoothing, flat subtypes (coastal, river, shelf), ponds (never touching sea, river
-    or a pond), and merging same-kind cells into regions.
+    then smoothing, flat subtypes (coastal, river, shelf), ponds (seeded, then grown to
+    about `pondSize` cells; never touching sea, river or another pond), and merging same-kind
+    cells, ponds included, into regions.
   - `elevation.ts`: vertex and centre elevations, built up from the water, with banks
     clamped above water surfaces.
   - `ground.ts`: constrained Delaunay surfaces (`delaunator` + `constrainautor`, with an

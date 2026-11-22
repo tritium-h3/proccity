@@ -105,3 +105,24 @@ describe('flatSurface (old v1 cities)', () => {
     expect(g.points.every(p => p[2] === 0)).toBe(true);
   });
 });
+
+describe('pond cluster elevations', () => {
+  it('puts interior pond corners on the bed and rim corners on the bank', () => {
+    for (const seed of [1, 2, 3, 4]) {
+      const c = classify(cells, { flatWidth: 2, hilliness: 0.5, ponds: 3, pondSize: 6 }, createRng(seed));
+      const groups = mergeRegions(cells, c);
+      const levels = computeLevels(cells, c, groups, { relief: 150, hilliness: 0.5, flatWidth: 2, course, profile, sea, river, overrides: [] }, createRng(seed + 100));
+      for (const g of groups.filter(gg => gg.kind === 'pond')) {
+        const surface = levels.pondSurface[g.cells[0]]!;
+        for (const ci of g.cells) expect(levels.pondSurface[ci]).toBe(surface); // one level per pond
+        for (const ci of g.cells) for (const p of cells[ci].poly[0]) {
+          const k = vkey(p);
+          const touchesLand = cells.some((cell, j) => c.kind[j] !== 'pond' && cell.poly[0].some(q => vkey(q) === k));
+          const e = levels.vertex.get(k)!;
+          if (touchesLand) expect(e).toBeGreaterThanOrEqual(surface + 0.5 - 1e-9);
+          else expect(e).toBeCloseTo(surface - 2, 9);
+        }
+      }
+    }
+  });
+});
