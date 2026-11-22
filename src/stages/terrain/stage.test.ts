@@ -350,3 +350,15 @@ describe('rounded ponds (polygonal shorelines seen in the browser)', () => {
     expect(ponds).toBeGreaterThan(4);
   }, 60_000);
 });
+
+describe('ponds never touch (two shared a corner at irregularity 0, seed 5)', () => {
+  it('keeps every pair of ponds apart, even at a corner', () => {
+    for (const [irregularity, seed] of [[0, 5], [0, 1], [0.5, 2], [1, 3]] as const) {
+      const ponds = run({ irregularity, ponds: 4 }, seed).children.filter(c => c.kind === 'pond');
+      for (let i = 0; i < ponds.length; i++) for (let j = i + 1; j < ponds.length; j++) {
+        const contact = area(intersect(offsetPolygons(ponds[i].geometry.footprint, 0.5), ponds[j].geometry.footprint));
+        expect(contact, `${ponds[i].id} / ${ponds[j].id}, irr ${irregularity} seed ${seed}`).toBe(0);
+      }
+    }
+  }, 60_000);
+});

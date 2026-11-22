@@ -278,6 +278,14 @@ export function buildCells(
       if (len > 1) { neighbours[i].push(j); neighbours[j].push(i); edges[i].push(len); edges[j].push(len); }
     }
   });
+  // Corner contact also comes from shared vertices: snapping can join the corners of cells
+  // whose seeds aren't Delaunay neighbours, and that contact was missed (two ponds touched
+  // at a corner).
+  const atVertex = new Map<string, number[]>();
+  pieces.forEach((p, i) => { for (const q of p.poly[0]) { const k = vkey(q); (atVertex.get(k) ?? atVertex.set(k, []).get(k)!).push(i); } });
+  for (const ids of atVertex.values()) for (const i of ids) for (const j of ids) {
+    if (i !== j && !adjacent[i].includes(j)) adjacent[i].push(j);
+  }
   const waterBox = (w: MultiPolygon | null) => (w && w.length ? bounds(w) : null);
   const seaBox = waterBox(sea), riverBox = waterBox(river);
   const boxNear = (b1: ReturnType<typeof bounds>, b2: ReturnType<typeof bounds> | null) =>
