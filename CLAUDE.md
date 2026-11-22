@@ -42,14 +42,21 @@ real stage is designed with the owner one at a time; districts come next.
 - **`stages/terrain/` (v2, all polygons):**
   - `water.ts`: the sea and river carve the site, with a gentle coast and a monotonic river
     profile.
-  - `cells.ts`: Voronoi cells over the land (`d3-delaunay`) and a neighbour graph, including
-    hop distance and nearest water.
+  - `cells.ts`: irregular cells. Random variable-density seeds become Voronoi cells
+    (`d3-delaunay`). Close corners snap together (boundary-aware, memoised). A share of cells,
+    set by `irregularity`, is cut by straight lines into wedges and triangles, with each cut
+    point mirrored into the neighbour so there are no T-junctions (Clipper preserves in-line
+    points). Each cell gets a neighbour graph with shared edge lengths, corner adjacency,
+    hop distance, nearest water and `riverHop`.
   - `rules.ts`: `TERRAIN_RULES`, a declarative weighted rule table (a stochastic grammar),
-    then smoothing, flat subtypes (coastal, river, shelf), ponds (seeded, then grown to
-    about `pondSize` cells; never touching sea, river or another pond), and merging same-kind
-    cells, ponds included, into regions.
-  - `elevation.ts`: vertex and centre elevations, built up from the water, with banks
-    clamped above water surfaces.
+    then smoothing (votes weighted by shared edge length), flat subtypes (coastal, river,
+    shelf), ponds (seeded, then grown to about `pondSize` hectares; no contact at all, not even
+    a corner, with sea, river, another pond or the site edge), and merging same-kind cells,
+    ponds included, into regions.
+  - `elevation.ts`: vertex and centre elevations. Flats, ponds and banks are pinned. Other
+    land comes from a smooth Gaussian height field over position, rising from the nearest
+    pinned edge over about a cell's distance, never below the river floor (river surface +
+    `riverHop`). Per-cell averages made cliffs with irregular cells.
   - `ground.ts`: constrained Delaunay surfaces (`delaunator` + `constrainautor`, with an
     `earcut` fallback).
   - `stage.ts`: assembly. About 3,200 triangles and about 100–120 ms warm at 2 km.

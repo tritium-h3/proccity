@@ -59,8 +59,10 @@ export function classify(cells: Cell[], o: { flatWidth: number; hilliness: numbe
     kind = cells.map((cell, i) => {
       if (cell.touchesSea || cell.touchesRiver || cell.neighbours.length === 0) return before[i];
       if (cell.neighbours.some(n => before[n] === before[i])) return before[i];
+      // Neighbours vote by shared edge length, so a sliver's corner counts less than a big
+      // neighbour along a long side.
       const counts = new Map<CellKind, number>();
-      for (const n of cell.neighbours) counts.set(before[n], (counts.get(before[n]) ?? 0) + 1);
+      cell.neighbours.forEach((n, k) => counts.set(before[n], (counts.get(before[n]) ?? 0) + (cell.edge[k] ?? 1)));
       changed = true;
       return LAND_KINDS.reduce((best, k) => ((counts.get(k) ?? 0) > (counts.get(best) ?? 0) ? k : best), before[cell.neighbours[0]] as LandKind);
     });
@@ -72,13 +74,16 @@ export function classify(cells: Cell[], o: { flatWidth: number; hilliness: numbe
     cell.hop <= o.flatWidth && cell.nearest === 'sea' ? 'coastal'
       : cell.hop <= o.flatWidth && cell.nearest === 'river' ? 'river' : 'shelf';
 
-  // 4. Ponds: seed at an eligible cell, then grow into eligible neighbours up to a target
-  //    size around pondSize. Eligible = flat or slope, not touching the sea or river. A pond
-  //    never grows beside a different pond (touching ponds would logically be one).
-  const pondSize = o.pondSize ?? 1;
+  // 4. Ponds: seed at an eligible cell, then grow into eligible neighbours until the pond's
+  //    area reaches a target around pondSize (hectares). Eligible = flat or slope with no
+  //    contact at all with the sea or river, not even a corner. A pond never touches a
+  //    different pond, even at a corner (touching ponds would logically be one).
+  const targetArea = (o.pondSize ?? 0) * 10_000;
   const owner = new Int32Array(cells.length).fill(-1); // pond index per cell
-  const eligible = (id: number) => (kind[id] === 'flat' || kind[id] === 'slope') && !cells[id].touchesSea && !cells[id].touchesRiver;
-  const besideOther = (id: number, pond: number) => cells[id].neighbours.some(n => owner[n] >= 0 && owner[n] !== pond);
+  // Not on the site's outer edge either: a pond cut off by the edge of the map looks wrong,
+  // and its edge corners would touch no land to hold a bank.
+  const eligible = (id: number) => (kind[id] === 'flat' || kind[id] === 'slope') && !cells[id].nearSea && !cells[id].nearRiver && !cells[id].touchesEdge;
+  const besideOther = (id: number, pond: number) => cells[id].adjacent.some(n => owner[n] >= 0 && owner[n] !== pond);
   const candidates = cells.filter(c => eligible(c.id)).map(c => c.id);
   for (let i = candidates.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -87,19 +92,21 @@ export function classify(cells: Cell[], o: { flatWidth: number; hilliness: numbe
   let placed = 0;
   for (const seed of candidates) {
     if (placed >= o.ponds) break;
-    if (owner[seed] >= 0 || besideOther(seed, placed)) continue;
+    const target = targetArea * (0.5 + rng());
+    if (owner[seed] >= 0 || besideOther(seed, placed) || (targetArea > 0 && cells[seed].area > 1.5 * target)) continue;
     const pond = placed++;
-    const target = Math.max(1, Math.round(pondSize * (0.5 + rng())));
     const members = [seed];
     owner[seed] = pond;
-    while (members.length < target) {
+    let total = cells[seed].area;
+    while (total < target) {
       const frontier = [...new Set(members.flatMap(m => cells[m].neighbours))]
-        .filter(n => owner[n] < 0 && eligible(n) && !besideOther(n, pond))
+        .filter(n => owner[n] < 0 && eligible(n) && !besideOther(n, pond) && total + cells[n].area <= 1.5 * target)
         .sort((x, y) => x - y);
       if (!frontier.length) break;
       const next = frontier[Math.floor(rng() * frontier.length)];
       owner[next] = pond;
       members.push(next);
+      total += cells[next].area;
     }
     for (const m of members) kind[m] = 'pond';
   }

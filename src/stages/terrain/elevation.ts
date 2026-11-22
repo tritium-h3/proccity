@@ -41,8 +41,11 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
   // Land beside the river is built up from the river, not from sea level: a slope or hill
   // cell along the upper river otherwise sat tens of metres below it (a levee carrying the
   // water). Floor: half a metre above the highest river surface at any of its corners.
-  const riverFloor = (cell: Cell) => (o.course && (cell.touchesRiver || cell.nearest === 'river')
-    ? Math.max(...cell.poly[0].map(surfaceAt)) + 0.5 + cell.hop : 0);
+  // Applies by distance from the river (riverHop), whatever water is nearest: a cell nearest
+  // the sea but beside the upper river otherwise sat far below it (and dragged a nearby pond
+  // down with it).
+  const riverFloor = (cell: Cell) => (o.course && Number.isFinite(cell.riverHop)
+    ? Math.max(...cell.poly[0].map(surfaceAt)) + 0.5 + cell.riverHop : 0);
   const base = cells.map(cell => Math.max(1, riverFloor(cell),
     o.relief * smoothstep(0, maxHop, cell.hop) + (rng() - 0.5) * 2 * 0.15 * o.hilliness * o.relief));
 
@@ -58,7 +61,8 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     if (c.kind[i] !== 'flat') return null;
     const ov = override.get(groupOf[i]);
     if (ov !== undefined) return ov;
-    if (c.flatType[i] === 'coastal') return 2 + cell.hop;
+    // Coastal flats sit just above the sea, but never below the river beside them.
+    if (c.flatType[i] === 'coastal') return Math.max(2 + cell.hop, riverFloor(cell));
     if (c.flatType[i] === 'river') {
       // At least half a metre above the river surface at every corner of the cell: the
       // surface falls along the river, so the seed's level alone left the upstream end of a
@@ -76,7 +80,10 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     if (g.kind !== 'pond') continue;
     const inPond = new Set(g.cells);
     const around = [...new Set(g.cells.flatMap(ci => cells[ci].neighbours))].filter(n => !inPond.has(n)).map(levelOf);
-    const surface = Math.max(1, (around.length ? Math.min(...around) : Math.min(...g.cells.map(ci => base[ci]))) - 0.5);
+    // Never below the river beside it (via its cells' river floor); if that's above its lowest
+    // neighbour, the bank rule lifts those corners, so the water never tops its rim.
+    const floor = Math.max(0, ...g.cells.map(ci => riverFloor(cells[ci])));
+    const surface = Math.max(1, (around.length ? Math.min(...around) : Math.min(...g.cells.map(ci => base[ci]))) - 0.5, floor - 0.5);
     for (const ci of g.cells) pondSurface[ci] = surface;
   }
 
@@ -96,7 +103,31 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
   const BAND = 2;
   const bank = o.river ? offsetPolygons(o.river, BAND) : null;
   const shore = o.sea ? offsetPolygons(o.sea, BAND) : null;
+  // Smooth height field over position: blends nearby cells' base heights by distance
+  // (Gaussian, about one cell wide). Per-cell averages made near-vertical facets wherever
+  // irregular cells put close vertices among very different cells.
+  const sigma = Math.max(30, Math.sqrt(cells.reduce((t, c) => t + c.area, 0) / Math.max(1, cells.length)) * 0.8);
+  const G = sigma * 2.5;
+  const seedGrid = new Map<string, number[]>();
+  cells.forEach((cell, i) => {
+    const k = `${Math.floor(cell.seed[0] / G)},${Math.floor(cell.seed[1] / G)}`;
+    (seedGrid.get(k) ?? seedGrid.set(k, []).get(k)!).push(i);
+  });
+  const field = (p: Point2): number => {
+    const gx = Math.floor(p[0] / G), gz = Math.floor(p[1] / G);
+    let ws = 0, vs = 0;
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      for (const i of seedGrid.get(`${gx + dx},${gz + dz}`) ?? []) {
+        const d2 = (cells[i].seed[0] - p[0]) ** 2 + (cells[i].seed[1] - p[1]) ** 2;
+        const w = Math.exp(-d2 / (sigma * sigma));
+        ws += w; vs += w * base[i];
+      }
+    }
+    return ws > 1e-12 ? vs / ws : 0;
+  };
+
   const vertex = new Map<string, number>();
+  const free: { k: string; p: Point2; inc: number[] }[] = [];
   for (const [k, { p, cells: inc }] of incident) {
     const flats = inc.map(i => flatLevel[i]).filter((v): v is number => v !== null);
     const ponds = inc.map(i => pondSurface[i]).filter((v): v is number => v !== null);
@@ -109,19 +140,52 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
       e = Math.min(...flats, ...ponds.map(s => s + 0.5));
       if (ponds.length) e = Math.max(e, Math.max(...ponds) + 0.5);
     } else {
-      e = inc.reduce((s, i) => s + base[i], 0) / inc.length;
+      e = NaN; // free: blended from the pinned heights around it, below
     }
     // Only vertices of water-touching cells can lie in a bank band.
     const onBank = !!bank && inc.some(i => cells[i].touchesRiver) && containsPoint(bank, p);
     const onShore = !!shore && inc.some(i => cells[i].touchesSea) && containsPoint(shore, p);
     if (onBank || onShore) e = Math.max(onBank ? surfaceAt(p) + 0.5 : -Infinity, onShore ? 0.5 : -Infinity);
-    vertex.set(k, e);
+    // A pond's bank still holds inside a shore/river band (a pond corner can sit within 2 m of
+    // the sea without the pond touching it).
+    if (ponds.length && ponds.length !== inc.length) e = Math.max(e, Math.max(...ponds) + 0.5);
+    if (Number.isNaN(e)) free.push({ k, p, inc });
+    else vertex.set(k, e);
   }
 
-  const centre = cells.map((_, i) => {
+  // Free (slope/hills) vertices rise from the pinned edges around them (flats, ponds, banks)
+  // to the field over about a cell's distance: "slopes rise from the edge of flats". Jumping
+  // straight to the field made cliffs at every flat and pond edge.
+  const RISE = sigma * 1.5;
+  const pinGrid = new Map<string, [number, number, number][]>();
+  for (const [k, e] of vertex) {
+    const p = incident.get(k)!.p;
+    const gk = `${Math.floor(p[0] / RISE)},${Math.floor(p[1] / RISE)}`;
+    (pinGrid.get(gk) ?? pinGrid.set(gk, []).get(gk)!).push([p[0], p[1], e]);
+  }
+  const blended = (p: Point2, target: number): number => {
+    const gx = Math.floor(p[0] / RISE), gz = Math.floor(p[1] / RISE);
+    let best: [number, number, number] | null = null, bd = Infinity;
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      for (const q of pinGrid.get(`${gx + dx},${gz + dz}`) ?? []) {
+        const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (d < bd) { bd = d; best = q; }
+      }
+    }
+    if (!best || bd >= RISE) return target;
+    return best[2] + (target - best[2]) * smoothstep(0, RISE, bd);
+  };
+  for (const { k, p, inc } of free) {
+    // Never below the river floor of the cells it belongs to.
+    vertex.set(k, Math.max(blended(p, field(p)), ...inc.map(i => riverFloor(cells[i]))));
+  }
+
+  const centre = cells.map((cell, i) => {
     if (pondSurface[i] !== null) return pondSurface[i]! - 2;
     if (flatLevel[i] !== null) return flatLevel[i]!;
-    return base[i] + (c.kind[i] === 'hills' ? 0.1 * o.hilliness * o.relief : 0);
+    // Hills get a summit bump, scaled to the cell (a full bump on a small cell was a spike).
+    const bump = c.kind[i] === 'hills' ? Math.min(0.1 * o.hilliness * o.relief, 0.3 * Math.sqrt(cell.area)) : 0;
+    return Math.max(blended(cell.seed, field(cell.seed)), riverFloor(cell)) + bump;
   });
 
   return { vertex, centre, flatLevel, pondSurface };

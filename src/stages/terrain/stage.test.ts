@@ -108,11 +108,16 @@ describe('terrain v2 stage', () => {
       expect(f, `seed ${seed}`).toBeDefined();
       const river = r.children.find(c => c.kind === 'river')!;
       const nearRiver = offsetPolygons(river.geometry.footprint, 2);
+      // Interior points sit at the override. Edge points meet their neighbours: the bank band
+      // just above the river, and a corner shared with a lower flat takes the lower level.
+      const edge = new Set(f!.geometry.footprint.flat(2).map(q => `${Math.round(q[0] * 100)},${Math.round(q[1] * 100)}`));
+      let interiorCount = 0;
       for (const p of f!.data!.ground!.points) {
-        // Level at the override, except the bank band, which sits just above the river.
-        if (containsPoint(nearRiver, [p[0], p[1]])) expect(p[2]).toBeCloseTo(riverSurfaceAt(river.data!.course!, river.data!.profile!, [p[0], p[1]]) + 0.5, 6);
-        else expect(p[2]).toBeCloseTo(80, 6);
+        const onEdge = edge.has(`${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`);
+        if (containsPoint(nearRiver, [p[0], p[1]])) expect(p[2]).toBeGreaterThanOrEqual(riverSurfaceAt(river.data!.course!, river.data!.profile!, [p[0], p[1]]) + 0.5 - 1e-6);
+        else if (!onEdge) { expect(p[2]).toBeCloseTo(80, 6); interiorCount++; }
       }
+      expect(interiorCount).toBeGreaterThan(0);
       return;
     }
     throw new Error('no river flat found in seeds 1–6');
@@ -266,6 +271,43 @@ describe('no land strips inside water (found in the browser)', () => {
         expect(p[2]).toBeLessThanOrEqual(0);
         expect(seaPts.get(k(p))!).toBeCloseTo(p[2], 6);
       }
+    }
+  });
+});
+
+describe('strict pond rule (irregular cells)', () => {
+  it('keeps ponds from touching the sea, the river or each other, even at a corner', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const r = run({ ponds: 6, pondSize: 3, irregularity: 1 }, seed);
+      const ponds = r.children.filter(c => c.kind === 'pond');
+      for (const p of ponds) {
+        const grown = offsetPolygons(p.geometry.footprint, 1);
+        for (const o of r.children) {
+          if (o === p || !WATER.has(o.kind)) continue;
+          expect(area(intersect(grown, o.geometry.footprint)), `${p.id} vs ${o.id}, seed ${seed}`).toBeLessThan(1e-6);
+        }
+      }
+    }
+  }, 60_000);
+});
+
+describe('no cliffs from irregular cells (found in the browser)', () => {
+  it('keeps very steep land triangles rare', () => {
+    for (const seed of [1, 2, 3, 4]) {
+      const r = run({}, seed);
+      let total = 0, over55 = 0, over70 = 0;
+      for (const c of r.children.filter(k => k.kind === 'slope' || k.kind === 'hills')) {
+        const g = c.data!.ground!;
+        for (const [i, j, k] of g.triangles) {
+          const a = g.points[i], b = g.points[j], d = g.points[k];
+          const ux = b[0] - a[0], uz = b[1] - a[1], uy = b[2] - a[2], vx = d[0] - a[0], vz = d[1] - a[1], vy = d[2] - a[2];
+          const ny = ux * vz - uz * vx, nx = uz * vy - uy * vz, nz = uy * vx - ux * vy;
+          const ang = Math.acos(Math.abs(ny) / Math.hypot(nx, ny, nz)) * 180 / Math.PI;
+          total++; if (ang > 55) over55++; if (ang > 70) over70++;
+        }
+      }
+      expect(over70 / total, `seed ${seed}`).toBeLessThan(0.01);
+      expect(over55 / total, `seed ${seed}`).toBeLessThan(0.03);
     }
   });
 });

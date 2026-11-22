@@ -7,7 +7,7 @@
 // rectangle produced garbage.
 
 import {
-  Clipper, ClipType, EndType, FillRule, JoinType, PolyTree64,
+  Clipper, Clipper64, ClipType, EndType, FillRule, JoinType, PolyTree64,
   type Path64, type Paths64, type PolyPath64,
 } from 'clipper2-ts';
 import type { MultiPolygon, Point2, Polygon, Ring } from '../doc/types.js';
@@ -50,8 +50,15 @@ function fromTree(tree: PolyPath64): MultiPolygon {
 }
 
 function boolean(type: ClipType, a: Paths64, b: Paths64 | null): MultiPolygon {
+  // Keep in-line (collinear) vertices: terrain cells insert cut points into neighbouring
+  // outlines so shared edges have matching vertices; dropping them would bring back
+  // T-junctions (and cracks) in the merged ground mesh.
+  const c = new Clipper64();
+  c.preserveCollinear = true;
+  c.addSubject(a);
+  if (b && b.length) c.addClip(b);
   const tree = new PolyTree64();
-  Clipper.booleanOpWithPolyTree(type, a, b, tree, FillRule.NonZero);
+  c.execute(type, FillRule.NonZero, tree);
   return fromTree(tree);
 }
 

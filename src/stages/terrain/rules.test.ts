@@ -80,17 +80,17 @@ describe('pond clusters', () => {
     return { c, groups: mergeRegions(cells, c).filter(g => g.kind === 'pond') };
   };
 
-  it('grows ponds to several cells and merges each into one region', () => {
-    let total = 0, n = 0;
+  it('grows ponds towards their target area and merges each into one region', () => {
+    const pondArea = (g: { cells: number[] }) => g.cells.reduce((t, ci) => t + cells[ci].area, 0);
+    const areas: number[] = [];
     for (const seed of [1, 2, 3, 4, 5, 6]) {
-      const { groups } = pondGroups(seed, 4);
-      for (const g of groups) {
-        total += g.cells.length; n++;
-        expect(g.cells.length).toBeLessThanOrEqual(6); // 1.5 × pondSize
+      for (const g of pondGroups(seed, 4).groups) {
+        areas.push(pondArea(g));
+        expect(pondArea(g)).toBeLessThanOrEqual(4 * 1.5 * 1.5 * 10_000 + 1e-6); // ≤ 1.5 × (1.5 × 4 ha)
       }
     }
-    expect(n).toBeGreaterThan(0);
-    expect(total / n).toBeGreaterThan(2);
+    expect(areas.length).toBeGreaterThan(0);
+    expect(areas.some(a => a > 15_000)).toBe(true); // multi-cell ponds happen
   });
 
   it('keeps each pond connected, off the sea and river, and apart from other ponds', () => {
@@ -112,7 +112,9 @@ describe('pond clusters', () => {
     }
   });
 
-  it('stays single-cell at pondSize 1', () => {
-    for (const g of pondGroups(2, 1).groups) expect(g.cells).toHaveLength(1);
+  it('keeps tiny pond targets to small ponds', () => {
+    for (const g of pondGroups(2, 0.5).groups) {
+      expect(g.cells.reduce((t, ci) => t + cells[ci].area, 0)).toBeLessThanOrEqual(0.5 * 1.5 * 1.5 * 10_000 + 1e-6);
+    }
   });
 });

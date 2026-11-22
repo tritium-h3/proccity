@@ -45,3 +45,24 @@ describe('buildCells', () => {
     expect(checkPartition(makeSlab(land), cells.map(c => makeSlab([c.poly]))).problems).toEqual([]);
   });
 });
+
+describe('irregular cells', () => {
+  const tri = (cells: ReturnType<typeof buildCells>) => cells.filter(c => c.poly[0].length <= 4).length;
+  it('cuts more cells into triangles and wedges as irregularity rises, keeping the partition', () => {
+    let low = 0, high = 0;
+    for (const s of [1, 2, 3]) {
+      const a = buildCells(site, site, null, null, 120, createRng(s), 0);
+      const b = buildCells(site, site, null, null, 120, createRng(s), 1);
+      low += tri(a); high += tri(b);
+      expect(b.length).toBeGreaterThan(a.length);
+      expect(checkPartition(makeSlab(site), b.map(c => makeSlab([c.poly]))).problems).toEqual([]);
+    }
+    expect(high).toBeGreaterThan(low * 1.5);
+  });
+
+  it('varies cell sizes widely', () => {
+    const cells = buildCells(site, site, null, null, 120, createRng(7), 0.5);
+    const areas = cells.map(c => c.area).sort((a, b) => a - b);
+    expect(areas[Math.floor(areas.length * 0.9)] / areas[Math.floor(areas.length * 0.1)]).toBeGreaterThan(4);
+  });
+});

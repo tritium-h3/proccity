@@ -46,6 +46,18 @@ function distToLine(p: Point2, line: Point2[]): number {
   return best;
 }
 
+/** Distance from a point to a polygon's outline (inside or out). */
+function ringDistance(poly: Polygon, p: Point2): number {
+  let best = Infinity;
+  for (const ring of poly) for (let i = 0; i < ring.length; i++) {
+    const [ax, az] = ring[i], [bx, bz] = ring[(i + 1) % ring.length];
+    const dx = bx - ax, dz = bz - az;
+    const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - az) * dz) / (dx * dx + dz * dz || 1)));
+    best = Math.min(best, Math.hypot(p[0] - (ax + dx * t), p[1] - (az + dz * t)));
+  }
+  return best;
+}
+
 function distanceToPolygon(poly: Polygon, p: Point2): number {
   if (containsPoint([poly], p)) return 0;
   let best = Infinity;
@@ -89,8 +101,9 @@ export const terrain: Stage = {
     { key: 'riverWidth', label: 'River width', type: 'number', min: 10, max: 120, step: 5, default: 40, unit: 'm' },
     { key: 'flatWidth', label: 'Flat width', type: 'number', min: 0, max: 5, step: 1, default: 2, help: 'How many cells deep the coastal and river flats run' },
     { key: 'ponds', label: 'Ponds', type: 'number', min: 0, max: 6, step: 1, default: 2 },
-    { key: 'pondSize', label: 'Pond size', type: 'number', min: 1, max: 10, step: 1, default: 4, help: 'Roughly how many cells each pond grows to' },
+    { key: 'pondSize', label: 'Pond size', type: 'number', min: 0.5, max: 10, step: 0.5, default: 4, unit: 'ha', help: 'Roughly how big each pond grows' },
     { key: 'cellSize', label: 'Cell size', type: 'number', min: 60, max: 250, step: 10, default: 120, unit: 'm', help: 'How finely the land is divided' },
+    { key: 'irregularity', label: 'Irregularity', type: 'number', min: 0, max: 1, step: 0.05, default: 0.5, help: 'How many cells are cut into wedges and triangles' },
   ],
   overridable: {
     flat: [{ key: 'elevation', label: 'Elevation', type: 'number', min: 1, max: 400, step: 1, default: 3, unit: 'm' }],
@@ -106,7 +119,7 @@ export const terrain: Stage = {
     const site = leaves.find(l => l.kind === 'site');
     if (!site) return { children: new Map() };
     const s = settings as Settings & { relief: number; hilliness: number; shore: Shore; river: boolean;
-      riverWidth: number; flatWidth: number; ponds: number; pondSize: number; cellSize: number };
+      riverWidth: number; flatWidth: number; ponds: number; pondSize: number; cellSize: number; irregularity: number };
     const footprint = site.geometry.footprint;
     const xs = footprint[0][0].map(p => p[0]);
     const size = Math.max(...xs) - Math.min(...xs);
@@ -118,7 +131,7 @@ export const terrain: Stage = {
     const land = difference(footprint, union(water.sea ?? [], water.river?.polygon ?? []));
 
     // 2–3. Cells, classification, regions.
-    const cells = buildCells(land, footprint, water.sea, water.river?.polygon ?? null, s.cellSize, rng);
+    const cells = buildCells(land, footprint, water.sea, water.river?.polygon ?? null, s.cellSize, rng, s.irregularity);
     const classified = classify(cells, { flatWidth: s.flatWidth, hilliness: s.hilliness, ponds: s.ponds, pondSize: s.pondSize }, rng);
     const groups = mergeRegions(cells, classified);
 
@@ -225,7 +238,11 @@ export const terrain: Stage = {
       const fp = polys.length === 1 ? [polys[0]] : union(polys, []);
       const interior: [number, number, number][] = [];
       for (const ci of g.cells) {
-        interior.push([cells[ci].seed[0], cells[ci].seed[1], levels.centre[ci]]);
+        // A thin cell's centre can sit a metre from its own corners at a different height (a
+        // micro-cliff); such cells just interpolate from their corners.
+        if (distanceToPolygon(cells[ci].poly, cells[ci].seed) === 0 && ringDistance(cells[ci].poly, cells[ci].seed) >= 3) {
+          interior.push([cells[ci].seed[0], cells[ci].seed[1], levels.centre[ci]]);
+        }
         for (const ring of cells[ci].poly) for (const p of ring) interior.push([p[0], p[1], vertexElevation(p) ?? levels.centre[ci]]);
       }
       const fallback = (p: Point2) => {
