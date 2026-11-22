@@ -126,58 +126,87 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
     return ws > 1e-12 ? vs / ws : 0;
   };
 
-  const vertex = new Map<string, number>();
-  const free: { k: string; p: Point2; inc: number[] }[] = [];
-  for (const [k, { p, cells: inc }] of incident) {
-    const flats = inc.map(i => flatLevel[i]).filter((v): v is number => v !== null);
-    const ponds = inc.map(i => pondSurface[i]).filter((v): v is number => v !== null);
-    let e: number;
-    if (ponds.length && ponds.length === inc.length) {
-      // Shared only by pond cells: the pond's bed.
-      e = Math.min(...ponds) - 2;
-    } else if (flats.length || ponds.length) {
-      // The lowest touching level, but never below any touching pond's bank.
-      e = Math.min(...flats, ...ponds.map(s => s + 0.5));
-      if (ponds.length) e = Math.max(e, Math.max(...ponds) + 0.5);
-    } else {
-      e = NaN; // free: blended from the pinned heights around it, below
-    }
-    // Only vertices of water-touching cells can lie in a bank band.
-    const onBank = !!bank && inc.some(i => cells[i].touchesRiver) && containsPoint(bank, p);
-    const onShore = !!shore && inc.some(i => cells[i].touchesSea) && containsPoint(shore, p);
-    if (onBank || onShore) e = Math.max(onBank ? surfaceAt(p) + 0.5 : -Infinity, onShore ? 0.5 : -Infinity);
-    // A pond's bank still holds inside a shore/river band (a pond corner can sit within 2 m of
-    // the sea without the pond touching it).
-    if (ponds.length && ponds.length !== inc.length) e = Math.max(e, Math.max(...ponds) + 0.5);
-    if (Number.isNaN(e)) free.push({ k, p, inc });
-    else vertex.set(k, e);
-  }
-
-  // Free (slope/hills) vertices rise from the pinned edges around them (flats, ponds, banks)
-  // to the field over about a cell's distance: "slopes rise from the edge of flats". Jumping
-  // straight to the field made cliffs at every flat and pond edge.
-  const RISE = sigma * 1.5;
-  const pinGrid = new Map<string, [number, number, number][]>();
-  for (const [k, e] of vertex) {
-    const p = incident.get(k)!.p;
-    const gk = `${Math.floor(p[0] / RISE)},${Math.floor(p[1] / RISE)}`;
-    (pinGrid.get(gk) ?? pinGrid.set(gk, []).get(gk)!).push([p[0], p[1], e]);
-  }
-  const blended = (p: Point2, target: number): number => {
-    const gx = Math.floor(p[0] / RISE), gz = Math.floor(p[1] / RISE);
-    let best: [number, number, number] | null = null, bd = Infinity;
-    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
-      for (const q of pinGrid.get(`${gx + dx},${gz + dz}`) ?? []) {
-        const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd) { bd = d; best = q; }
+  // Vertex heights, then a cap: a flat can't stand above what its own edge allows. A small
+  // flat whose every edge corner is pulled down to a lower neighbour's level otherwise kept
+  // its centre at its own level, making a pyramid "fin" (31 m on a 1,300 m² shelf).
+  // Lowering one flat can lower corners it shares, so repeat until nothing changes.
+  let blended: (p: Point2, target: number) => number = (_p, t) => t;
+  const computeVertices = (): Map<string, number> => {
+    const vertex = new Map<string, number>();
+    const free: { k: string; p: Point2; inc: number[] }[] = [];
+    for (const [k, { p, cells: inc }] of incident) {
+      const flats = inc.map(i => flatLevel[i]).filter((v): v is number => v !== null);
+      const ponds = inc.map(i => pondSurface[i]).filter((v): v is number => v !== null);
+      let e: number;
+      if (ponds.length && ponds.length === inc.length) {
+        // Shared only by pond cells: the pond's bed.
+        e = Math.min(...ponds) - 2;
+      } else if (flats.length || ponds.length) {
+        // The lowest touching level, but never below any touching pond's bank.
+        e = Math.min(...flats, ...ponds.map(s => s + 0.5));
+        if (ponds.length) e = Math.max(e, Math.max(...ponds) + 0.5);
+      } else {
+        e = NaN; // free: blended from the pinned heights around it, below
       }
+      // Only vertices of water-touching cells can lie in a bank band.
+      const onBank = !!bank && inc.some(i => cells[i].touchesRiver) && containsPoint(bank, p);
+      const onShore = !!shore && inc.some(i => cells[i].touchesSea) && containsPoint(shore, p);
+      if (onBank || onShore) e = Math.max(onBank ? surfaceAt(p) + 0.5 : -Infinity, onShore ? 0.5 : -Infinity);
+      // A pond's bank still holds inside a shore/river band (a pond corner can sit within 2 m of
+      // the sea without the pond touching it).
+      if (ponds.length && ponds.length !== inc.length) e = Math.max(e, Math.max(...ponds) + 0.5);
+      if (Number.isNaN(e)) free.push({ k, p, inc });
+      else vertex.set(k, e);
     }
-    if (!best || bd >= RISE) return target;
-    return best[2] + (target - best[2]) * smoothstep(0, RISE, bd);
+
+    // Free (slope/hills) vertices rise from the pinned edges around them (flats, ponds, banks)
+    // to the field over about a cell's distance: "slopes rise from the edge of flats". Jumping
+    // straight to the field made cliffs at every flat and pond edge.
+    const RISE = sigma * 1.5;
+    const pinGrid = new Map<string, [number, number, number][]>();
+    for (const [k, e] of vertex) {
+      const p = incident.get(k)!.p;
+      const gk = `${Math.floor(p[0] / RISE)},${Math.floor(p[1] / RISE)}`;
+      (pinGrid.get(gk) ?? pinGrid.set(gk, []).get(gk)!).push([p[0], p[1], e]);
+    }
+    blended = (p: Point2, target: number): number => {
+      const gx = Math.floor(p[0] / RISE), gz = Math.floor(p[1] / RISE);
+      let best: [number, number, number] | null = null, bd = Infinity;
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        for (const q of pinGrid.get(`${gx + dx},${gz + dz}`) ?? []) {
+          const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+          if (d < bd) { bd = d; best = q; }
+        }
+      }
+      if (!best || bd >= RISE) return target;
+      return best[2] + (target - best[2]) * smoothstep(0, RISE, bd);
+    };
+    for (const { k, p, inc } of free) {
+      // Never below the river floor of the cells it belongs to.
+      vertex.set(k, Math.max(blended(p, field(p)), ...inc.map(i => riverFloor(cells[i]))));
+    }
+
+    return vertex;
   };
-  for (const { k, p, inc } of free) {
-    // Never below the river floor of the cells it belongs to.
-    vertex.set(k, Math.max(blended(p, field(p)), ...inc.map(i => riverFloor(cells[i]))));
+  let vertex = computeVertices();
+  const groupOfCell = new Int32Array(cells.length).fill(-1);
+  groups.forEach((g, gi) => g.cells.forEach(ci => { groupOfCell[ci] = gi; }));
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    groups.forEach((g, gi) => {
+      if (g.kind !== 'flat') return;
+      let edgeMax = -Infinity;
+      for (const ci of g.cells) for (const p of cells[ci].poly[0]) {
+        const inc = incident.get(vkey(p))!.cells;
+        if (inc.some(j => groupOfCell[j] !== gi) || cells[ci].touchesEdge) edgeMax = Math.max(edgeMax, vertex.get(vkey(p))!);
+      }
+      if (!Number.isFinite(edgeMax)) return;
+      for (const ci of g.cells) {
+        if (flatLevel[ci]! > edgeMax + 1e-9) { flatLevel[ci] = edgeMax; changed = true; }
+      }
+    });
+    if (!changed) break;
+    vertex = computeVertices();
   }
 
   const centre = cells.map((cell, i) => {

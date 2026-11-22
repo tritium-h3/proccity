@@ -37,10 +37,13 @@ describe('computeLevels', () => {
   it('puts coastal and river flats at their levels', () => {
     const { c, levels } = setup(2);
     cells.forEach((cell, i) => {
-      if (c.flatType[i] === 'coastal') expect(levels.flatLevel[i]!).toBeGreaterThanOrEqual(2 + cell.hop - 1e-9); // 2 m + hop, or the river floor if higher
+      // Never above the formula level (2 m + hop, or the river floor); capped flats can come down
+      // to what their edge allows, but never below the 0.5 m bank.
+      if (c.flatType[i] === 'coastal') expect(levels.flatLevel[i]!).toBeGreaterThanOrEqual(0.5 - 1e-9);
       if (c.flatType[i] === 'river') {
         const highest = Math.max(...cell.poly[0].map(p => riverSurfaceAt(course, profile, p)));
-        expect(levels.flatLevel[i]).toBeCloseTo(Math.max(riverSurfaceAt(course, profile, cell.seed) + 1.5 + cell.hop, highest + 0.5), 5);
+        expect(levels.flatLevel[i]!).toBeLessThanOrEqual(Math.max(riverSurfaceAt(course, profile, cell.seed) + 1.5 + cell.hop, highest + 0.5) + 1e-9);
+        expect(levels.flatLevel[i]!).toBeGreaterThanOrEqual(0.5 - 1e-9);
       }
     });
   });

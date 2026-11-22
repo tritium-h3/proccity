@@ -311,3 +311,18 @@ describe('no cliffs from irregular cells (found in the browser)', () => {
     }
   });
 });
+
+describe('no flat fins (found in the browser)', () => {
+  it('keeps every point of a flat no higher than its highest edge point', () => {
+    for (const [irregularity, seed] of [[0.5, 1], [0.5, 2], [0.5, 3], [1, 1], [1, 2], [1, 3], [1, 4]] as const) {
+      const r = run({ irregularity }, seed);
+      for (const f of r.children.filter(c => c.kind === 'flat')) {
+        const k = (p: number[]) => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`;
+        const edge = new Set(f.geometry.footprint.flat(2).map(k));
+        const pts = f.data!.ground!.points;
+        const edgeMax = Math.max(...pts.filter(p => edge.has(k(p))).map(p => p[2]));
+        for (const p of pts) expect(p[2], `${f.id} irr ${irregularity} seed ${seed}`).toBeLessThanOrEqual(edgeMax + 0.01);
+      }
+    }
+  }, 60_000);
+});
