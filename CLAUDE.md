@@ -76,10 +76,13 @@ real stage is designed with the owner one at a time; districts come next.
 - **`scene/`:** `cityScene.ts` (renderer, camera, controls, picking, outlines), `view.ts`
   (shows the site plus the current stage's regions; `groundHeightAt`; outlines drape over
   the ground), `slabMesh.ts` (merged mesh with a face → node lookup). The terrain renderer
-  merges every region's `ground` into one mesh with a **TSL node material**
-  (`three/tsl`): kind colours blended by jittered weights for ragged edges, colour variation,
-  noise bump, up to ±1.5 m displacement, a ragged wet-sand band at sea level, and animated
-  water. It picks by ground point (`nodeIdAt`) rather than by face. Stage renderers live in `scene/renderers/`, **not on the stage**,
+  merges every region's `ground` into one mesh, then smooths it at draw time
+  (`scene/smoothMesh.ts`, pure and tested): Laplacian-smoothed normals, and one Phong
+  subdivision that curves midpoints by ≤ 1.25 m, straight at water edges. It renders with a
+  **TSL node material** (`three/tsl`): kind colours blended by two-octave jittered weights
+  for ragged edges, colour variation, noise bump, ≤ 0.75 m noise displacement (together with
+  the curve, within the 2 m cosmetic budget), a ragged wet-sand band at sea level, and
+  animated water. It picks by ground point (`nodeIdAt`) rather than by face. Stage renderers live in `scene/renderers/`, **not on the stage**,
   so the worker never bundles Three.js. The current stage's regions cover the site
   completely, so the site ground isn't drawn under them; drawing both z-fights.
 - `server.ts`: placeholder Express backend (`/api/health`). `config.ts`: hosts and ports.

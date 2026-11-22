@@ -14,6 +14,11 @@ import type { Point2, RegionNode } from '../../doc/types.js';
 import { containsPoint } from '../../grammar/polygon.js';
 import { riverSurfaceAt } from '../../stages/terrain/elevation.js';
 import { flatSurface } from '../../stages/terrain/ground.js';
+import { faceNormals, phongSubdivide, smoothNormals } from '../smoothMesh.js';
+
+// The 2 m cosmetic budget, split between curving the surface and noise displacement.
+const CURVE_MAX = 1.25;
+const NOISE_MAX = 0.75;
 import type { PickableMesh, StageRenderer } from './index.js';
 
 const WATER_KINDS = new Set(['sea', 'river', 'pond']);
@@ -42,7 +47,8 @@ function groundMaterial(): THREE.MeshStandardNodeMaterial {
   // Ragged region edges: jitter each channel's weight with its own noise, then sharpen, so
   // the boundary between two kinds wanders instead of following the polygon edge.
   const w = attribute<'vec4'>('weights', 'vec4');
-  const jitter = vec4(n(0.03, 0), n(0.03, 17), n(0.03, 31), n(0.03, 47)).mul(0.22);
+  const jitter = vec4(n(0.03, 0), n(0.03, 17), n(0.03, 31), n(0.03, 47)).add(
+    vec4(n(0.1, 3), n(0.1, 23), n(0.1, 37), n(0.1, 53)).mul(0.5)).mul(0.3);
   const s = pow(max(w.add(jitter), vec4(0)), vec4(4));
   const total = s.x.add(s.y).add(s.z).add(s.w).add(1e-4);
   const c = (i: number) => vec3(PALETTE[i].r, PALETTE[i].g, PALETTE[i].b);
@@ -52,12 +58,12 @@ function groundMaterial(): THREE.MeshStandardNodeMaterial {
   colour = mix(colour, vec3(SAND.r, SAND.g, SAND.b), wet.mul(float(1).sub(s.w.div(total))));
   m.colorNode = colour;
 
-  // Micro-relief: bump from fine noise, and a little real displacement (≤ ±1.5 m).
+  // Micro-relief: bump from fine noise, and a little real displacement (≤ ±NOISE_MAX).
   m.normalNode = bumpMap(n(0.25, 3).add(n(0.9, 11).mul(0.3)), float(0.6));
   // No displacement where land meets water (the bed weight is above 0 exactly on vertices
   // shared with a water region): ±1.5 m exceeded the 0.5 m bank freeboard and sank banks.
   const dry = float(1).sub(w.w.mul(20).clamp(0, 1));
-  m.positionNode = positionLocal.add(vec3(0, mx_noise_float(vec3(positionLocal.x.mul(0.03), 0, positionLocal.z.mul(0.03))).mul(1.5).mul(dry), 0));
+  m.positionNode = positionLocal.add(vec3(0, mx_noise_float(vec3(positionLocal.x.mul(0.03), 0, positionLocal.z.mul(0.03))).mul(NOISE_MAX).mul(dry), 0));
   return m;
 }
 
@@ -107,11 +113,15 @@ export const renderTerrain: StageRenderer = nodes => {
   }
   for (let i = 0; i < counts.length; i++) for (let k = 0; k < 4; k++) weights[i * 4 + k] /= counts[i];
 
+  // Smooth shading: soften normals, curve the surface by one subdivision (Phong), soften again.
+  const n0 = smoothNormals(pos, tris, faceNormals(pos, tris), 2);
+  const sub = phongSubdivide(pos, weights, tris, n0, { maxDy: CURVE_MAX });
+  const n1 = smoothNormals(sub.pos, sub.tris, faceNormals(sub.pos, sub.tris), 2);
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('weights', new THREE.Float32BufferAttribute(weights, 4));
-  geo.setIndex(tris);
-  geo.computeVertexNormals();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(sub.pos, 3));
+  geo.setAttribute('weights', new THREE.Float32BufferAttribute(sub.weights, 4));
+  geo.setAttribute('normal', new THREE.BufferAttribute(n1, 3));
+  geo.setIndex(sub.tris);
   const ground = new THREE.Mesh(geo, groundMaterial());
   ground.castShadow = true;
   ground.receiveShadow = true;
@@ -147,6 +157,6 @@ export const renderTerrain: StageRenderer = nodes => {
   const nodeIdAt = (p: Point2) => byPriority.find(n => containsPoint(n.geometry.footprint, p))?.id ?? null;
   const pickables: PickableMesh[] = [...waterMeshes, ground].map(mesh => ({ mesh, nodeIdAt }));
 
-  if (import.meta.env?.DEV) console.info(`[proccity] terrain mesh: ${tris.length / 3} triangles, built in ${(performance.now() - t0).toFixed(1)} ms`);
+  if (import.meta.env?.DEV) console.info(`[proccity] terrain mesh: ${sub.tris.length / 3} triangles (${tris.length / 3} stored), built in ${(performance.now() - t0).toFixed(1)} ms`);
   return { object: group, pickables };
 };
