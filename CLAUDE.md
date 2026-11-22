@@ -53,6 +53,9 @@ real stage is designed with the owner one at a time; districts come next.
     shelf), ponds (seeded, then grown to about `pondSize` hectares; no contact at all, not even
     a corner, with sea, river, another pond or the site edge), and merging same-kind cells,
     ponds included, into regions.
+  - `ponds.ts`: rounded pond shorelines, made before elevations. Shoreline edges are
+    subdivided, then their vertices Gaussian-smoothed. Each vertex moves in every ring that
+    holds it, so the partition stays exact. Moves that would fold or cross a cell are refused.
   - `elevation.ts`: vertex and centre elevations. Flats, ponds and banks are pinned. Other
     land comes from a smooth Gaussian height field over position, rising from the nearest
     pinned edge over about a cell's distance, never below the river floor (river surface +
