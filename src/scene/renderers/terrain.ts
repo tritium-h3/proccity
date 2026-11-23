@@ -2,24 +2,30 @@
 // surfaces. All fine detail is cosmetic and lives in a TSL node material (works on both
 // the WebGPU and WebGL 2 backends):
 //  - colour by region kind, blended with noise so region edges look ragged, not straight
-//  - micro-relief: noise bump, plus up to ±1.5 m vertex displacement
+//  - micro-relief: noise bump, plus up to ±NOISE_MAX vertex displacement
 //  - a ragged wet-sand band near sea level, so the simple coastline reads as rough
+// Per-pixel noise is read from a baked seamless tile (noiseTile.ts), a few texture reads
+// instead of about a dozen procedural noise evaluations, the main cost of orbiting.
 // None of it touches the saved geometry.
 
 import * as THREE from 'three/webgpu';
 import {
-  attribute, bumpMap, float, max, mix, mx_noise_float, positionLocal, positionWorld, pow, time, vec3, vec4,
+  attribute, bumpMap, float, max, mix, mx_noise_float, positionLocal, positionWorld, pow, texture, time, vec3, vec4,
 } from 'three/tsl';
 import type { Point2, RegionNode } from '../../doc/types.js';
 import { containsPoint } from '../../grammar/polygon.js';
 import { riverSurfaceAt } from '../../stages/terrain/elevation.js';
 import { flatSurface } from '../../stages/terrain/ground.js';
+import { noiseTile } from '../noiseTile.js';
 import { faceNormals, phongSubdivide, smoothNormals } from '../smoothMesh.js';
+import type { PickableMesh, StageRenderer } from './index.js';
 
 // The 2 m cosmetic budget, split between curving the surface and noise displacement.
 const CURVE_MAX = 1.25;
 const NOISE_MAX = 0.75;
-import type { PickableMesh, StageRenderer } from './index.js';
+// Only edges that curving would move at least this much are split: everywhere else (flats,
+// gentle slopes, water edges) the stored triangles are drawn as they are.
+const CURVE_MIN = 0.3;
 
 const WATER_KINDS = new Set(['sea', 'river', 'pond']);
 // Blend channels: flat, slope, hills, bed (under water).
@@ -39,27 +45,46 @@ export function waterSurfaceAt(node: RegionNode): ((p: Point2) => number) | null
   return null;
 }
 
+// One seamless noise tile, shared by every ground material: 256² RGBA, TILE_CYCLES noise
+// features across it, four independent channels.
+const TILE_SIZE = 256, TILE_CYCLES = 8;
+let tile: THREE.DataTexture | null = null;
+function noiseTexture(): THREE.DataTexture {
+  if (tile) return tile;
+  tile = new THREE.DataTexture(noiseTile(TILE_SIZE, TILE_CYCLES), TILE_SIZE, TILE_SIZE, THREE.RGBAFormat);
+  tile.wrapS = tile.wrapT = THREE.RepeatWrapping;
+  tile.magFilter = THREE.LinearFilter;
+  tile.minFilter = THREE.LinearMipmapLinearFilter;
+  tile.generateMipmaps = true;
+  tile.needsUpdate = true;
+  return tile;
+}
+
 function groundMaterial(): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.95, metalness: 0 });
   const xz = positionWorld.xz;
-  const n = (scale: number, offset: number) => mx_noise_float(vec3(xz.x.mul(scale).add(offset), float(offset), xz.y.mul(scale)));
+  // Four independent noises (about -1..1) at `freq` features per metre; `offset` shifts the
+  // tile so different uses don't line up.
+  const N = (freq: number, offset: number) => texture(noiseTexture(), xz.mul(freq / TILE_CYCLES).add(offset)).mul(2).sub(1);
 
   // Ragged region edges: jitter each channel's weight with its own noise, then sharpen, so
   // the boundary between two kinds wanders instead of following the polygon edge.
   const w = attribute<'vec4'>('weights', 'vec4');
-  const jitter = vec4(n(0.03, 0), n(0.03, 17), n(0.03, 31), n(0.03, 47)).add(
-    vec4(n(0.1, 3), n(0.1, 23), n(0.1, 37), n(0.1, 53)).mul(0.5)).mul(0.3);
+  const jitter = N(0.03, 0).add(N(0.1, 0.37).mul(0.5)).mul(0.3);
   const s = pow(max(w.add(jitter), vec4(0)), vec4(4));
   const total = s.x.add(s.y).add(s.z).add(s.w).add(1e-4);
   const c = (i: number) => vec3(PALETTE[i].r, PALETTE[i].g, PALETTE[i].b);
+  const misc = N(0.1, 0.71);
   let colour = c(0).mul(s.x).add(c(1).mul(s.y)).add(c(2).mul(s.z)).add(c(3).mul(s.w)).div(total);
-  colour = colour.mul(float(1).add(n(0.12, 5).mul(0.08)));                    // colour variation
-  const wet = float(1).sub(positionWorld.y.add(n(0.08, 9).mul(0.8)).sub(0.6).div(0.9).clamp(0, 1)); // wet sand below ~1.5 m
+  colour = colour.mul(float(1).add(misc.x.mul(0.08)));                         // colour variation
+  const wet = float(1).sub(positionWorld.y.add(misc.y.mul(0.8)).sub(0.6).div(0.9).clamp(0, 1)); // wet sand below ~1.5 m
   colour = mix(colour, vec3(SAND.r, SAND.g, SAND.b), wet.mul(float(1).sub(s.w.div(total))));
   m.colorNode = colour;
 
   // Micro-relief: bump from fine noise, and a little real displacement (≤ ±NOISE_MAX).
-  m.normalNode = bumpMap(n(0.25, 3).add(n(0.9, 11).mul(0.3)), float(0.6));
+  // The bump stays procedural (one octave, so one noise per pixel): a bump read from the tile
+  // showed a regular cross-hatch grain, since bilinear texture slopes come out faceted.
+  m.normalNode = bumpMap(mx_noise_float(vec3(xz.x.mul(0.25).add(3), float(3), xz.y.mul(0.25))), float(0.5));
   // No displacement where land meets water (the bed weight is above 0 exactly on vertices
   // shared with a water region): ±1.5 m exceeded the 0.5 m bank freeboard and sank banks.
   const dry = float(1).sub(w.w.mul(20).clamp(0, 1));
@@ -115,7 +140,7 @@ export const renderTerrain: StageRenderer = nodes => {
 
   // Smooth shading: soften normals, curve the surface by one subdivision (Phong), soften again.
   const n0 = smoothNormals(pos, tris, faceNormals(pos, tris), 2);
-  const sub = phongSubdivide(pos, weights, tris, n0, { maxDy: CURVE_MAX });
+  const sub = phongSubdivide(pos, weights, tris, n0, { maxDy: CURVE_MAX, minDy: CURVE_MIN });
   const n1 = smoothNormals(sub.pos, sub.tris, faceNormals(sub.pos, sub.tris), 2);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(sub.pos, 3));
@@ -127,12 +152,14 @@ export const renderTerrain: StageRenderer = nodes => {
   ground.receiveShadow = true;
   group.add(ground);
 
-  // Water surfaces: each water region's own triangles, lifted to its surface.
+  // Water surfaces: each water region's outline, triangulated on its own and lifted to its
+  // surface. The bed's triangles (with their interior points) were twice what a level
+  // surface needs.
   const waterMeshes: THREE.Mesh[] = [];
   for (const n of withGround.filter(nn => WATER_KINDS.has(nn.kind))) {
     const surface = waterSurfaceAt(n);
     if (!surface) continue;
-    const g = groundOf.get(n)!;
+    const g = flatSurface(n.geometry.footprint);
     const wp: number[] = [];
     for (const [a, b, c] of g.triangles) {
       const [ax, az] = g.points[a], [bx, bz] = g.points[b], [cx, cz] = g.points[c];

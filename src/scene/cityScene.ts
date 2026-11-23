@@ -25,7 +25,8 @@ const SELECT = 0xe8925f;
 export function createCityScene(container: HTMLElement): CityScene {
   // WebGPURenderer uses WebGPU where available and falls back to WebGL 2.
   const renderer = new THREE.WebGPURenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // 1.5, not 2: on a high-DPI screen 2 shades ~78 % more pixels for a barely visible gain.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap; // PCFSoftShadowMap was removed in r186
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -51,6 +52,13 @@ export function createCityScene(container: HTMLElement): CityScene {
   sun.shadow.mapSize.set(4096, 4096);
   sun.shadow.bias = -0.0005;
   sun.shadow.normalBias = 0.6;
+  // The shadow map only changes when the city does (the sun and its shadow box are fixed to
+  // the site), so it isn't redrawn every frame: re-rendering the ground into 4096² each frame
+  // was a large share of the cost of orbiting. After a change it's redrawn for a second, since
+  // new materials can compile asynchronously and miss a single frame.
+  sun.shadow.autoUpdate = false;
+  let shadowUntil = 0;
+  const refreshShadows = () => { shadowUntil = performance.now() + 1000; };
   scene.add(sun, sun.target);
 
   let built: BuiltView | null = null;
@@ -87,6 +95,7 @@ export function createCityScene(container: HTMLElement): CityScene {
     if (built) { scene.remove(built.group); built.dispose(); }
     built = buildView(v);
     scene.add(built.group);
+    refreshShadows();
     const b = v.tree.geometry.footprint[0]?.[0];
     if (b) fitToSite(Math.max(...b.map(p => Math.abs(p[0]))) * 2, groundHeightAt(v.tree, 0, 0));
     clearOutline(selection);
@@ -155,6 +164,7 @@ export function createCityScene(container: HTMLElement): CityScene {
     renderer.setAnimationLoop(() => {
       updateHover(); // at most one hover raycast per frame
       controls.update();
+      if (performance.now() < shadowUntil) sun.shadow.needsUpdate = true;
       renderer.render(scene, camera);
     });
     const backend = renderer.backend as { isWebGPUBackend?: boolean };

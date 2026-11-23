@@ -2,9 +2,11 @@
 // Plain arrays, no Three.js, so it's testable:
 //  - faceNormals / smoothNormals: area-weighted vertex normals, then Laplacian-smoothed over
 //    the mesh so light rolls over creases instead of breaking at them
-//  - phongSubdivide: split every triangle into four; each new edge midpoint is lifted towards
-//    the curved surface implied by its endpoints' normals (Phong tessellation), in y only and
-//    by at most maxDy, and left straight on edges touching water so banks can't sink
+//  - phongSubdivide: split edges at their midpoints, lifted towards the curved surface implied
+//    by their endpoints' normals (Phong tessellation), in y only and by at most maxDy, and
+//    left straight on edges touching water so banks can't sink. With minDy, only edges whose
+//    midpoint would move at least that much are split (and never at water); each triangle is
+//    cut to match its split edges, so neighbours agree and there are no cracks
 
 /** Area-weighted vertex normals (unnormalised face normals summed per vertex), normalised. */
 export function faceNormals(pos: number[], tris: number[]): Float32Array {
@@ -55,30 +57,39 @@ export interface Subdivided {
   parents: [number, number][]; linearY: number[];
 }
 
-export function phongSubdivide(pos: number[], weights: number[], tris: number[], normals: Float32Array, o: { maxDy: number }): Subdivided {
+export function phongSubdivide(pos: number[], weights: number[], tris: number[], normals: Float32Array, o: { maxDy: number; minDy?: number }): Subdivided {
   const outPos = [...pos], outW = [...weights];
   const outN: number[] = Array.from(normals);
   const parents: [number, number][] = [], linearY: number[] = [];
   const mid = new Map<string, number>();
   const touchesWater = (v: number) => weights[v * 4 + 3] > 0;
 
+  /** The lifted midpoint height of edge a–b, or null if the edge stays straight (water). */
+  const lift = (a: number, b: number): number | null => {
+    if (touchesWater(a) || touchesWater(b)) return null;
+    const pa = [pos[a * 3], pos[a * 3 + 1], pos[a * 3 + 2]], pb = [pos[b * 3], pos[b * 3 + 1], pos[b * 3 + 2]];
+    const m = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2];
+    // Phong: project the midpoint onto each endpoint's tangent plane and average (y only).
+    const proj = (p: number[], v: number) => {
+      const n = [normals[v * 3], normals[v * 3 + 1], normals[v * 3 + 2]];
+      const d = (m[0] - p[0]) * n[0] + (m[1] - p[1]) * n[1] + (m[2] - p[2]) * n[2];
+      return m[1] - d * n[1];
+    };
+    const phong = (proj(pa, a) + proj(pb, b)) / 2;
+    return Math.max(-o.maxDy, Math.min(o.maxDy, 0.75 * (phong - m[1])));
+  };
+  const split = (a: number, b: number): boolean => {
+    if (o.minDy === undefined) return true;
+    const dy = lift(a, b);
+    return dy !== null && Math.abs(dy) >= o.minDy;
+  };
+
   const midpoint = (a: number, b: number): number => {
     const key = a < b ? `${a},${b}` : `${b},${a}`;
     const hit = mid.get(key);
     if (hit !== undefined) return hit;
-    const P = (v: number) => [pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]];
-    const N = (v: number) => [normals[v * 3], normals[v * 3 + 1], normals[v * 3 + 2]];
-    const pa = P(a), pb = P(b), m = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2];
-    let y = m[1];
-    if (!touchesWater(a) && !touchesWater(b)) {
-      // Phong: project the midpoint onto each endpoint's tangent plane and average (y only).
-      const proj = (p: number[], n: number[]) => {
-        const d = (m[0] - p[0]) * n[0] + (m[1] - p[1]) * n[1] + (m[2] - p[2]) * n[2];
-        return m[1] - d * n[1];
-      };
-      const phong = (proj(pa, N(a)) + proj(pb, N(b))) / 2;
-      y = m[1] + Math.max(-o.maxDy, Math.min(o.maxDy, 0.75 * (phong - m[1])));
-    }
+    const m = [(pos[a * 3] + pos[b * 3]) / 2, (pos[a * 3 + 1] + pos[b * 3 + 1]) / 2, (pos[a * 3 + 2] + pos[b * 3 + 2]) / 2];
+    const y = m[1] + (lift(a, b) ?? 0);
     const v = outPos.length / 3;
     outPos.push(m[0], y, m[2]);
     for (let k = 0; k < 4; k++) outW.push((weights[a * 4 + k] + weights[b * 4 + k]) / 2);
@@ -90,11 +101,43 @@ export function phongSubdivide(pos: number[], weights: number[], tris: number[],
     return v;
   };
 
+  // Decide each edge once, so the two triangles sharing it agree.
+  const decided = new Map<string, boolean>();
+  const isSplit = (a: number, b: number) => {
+    const key = a < b ? `${a},${b}` : `${b},${a}`;
+    let d = decided.get(key);
+    if (d === undefined) { d = split(a, b); decided.set(key, d); }
+    return d;
+  };
+  const sqDist = (a: number, b: number) => (outPos[a * 3] - outPos[b * 3]) ** 2 + (outPos[a * 3 + 2] - outPos[b * 3 + 2]) ** 2;
+
   const outT: number[] = [];
   for (let t = 0; t < tris.length; t += 3) {
-    const [a, b, c] = [tris[t], tris[t + 1], tris[t + 2]];
-    const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
-    outT.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+    const v = [tris[t], tris[t + 1], tris[t + 2]];
+    const s = [isSplit(v[0], v[1]), isSplit(v[1], v[2]), isSplit(v[2], v[0])];
+    const n = s.filter(Boolean).length;
+    if (n === 0) { outT.push(v[0], v[1], v[2]); continue; }
+    if (n === 3) {
+      const [a, b, c] = v;
+      const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
+      outT.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+      continue;
+    }
+    // Rotate so the pattern starts at a fixed place (winding preserved).
+    if (n === 1) {
+      const k = s.indexOf(true);
+      const a = v[k], b = v[(k + 1) % 3], c = v[(k + 2) % 3];
+      const m = midpoint(a, b);
+      outT.push(a, m, c, m, b, c);
+    } else {
+      const k = s.indexOf(false); // the unsplit edge is v[k]–v[k+1]
+      const a = v[(k + 1) % 3], b = v[(k + 2) % 3], c = v[k]; // split: a–b and b–c
+      const m1 = midpoint(a, b), m2 = midpoint(b, c);
+      outT.push(m1, b, m2);
+      // The quad a, m1, m2, c: cut along the shorter diagonal.
+      if (sqDist(a, m2) <= sqDist(m1, c)) outT.push(a, m1, m2, a, m2, c);
+      else outT.push(a, m1, c, m1, m2, c);
+    }
   }
   return { pos: outPos, weights: outW, tris: outT, normals: Float32Array.from(outN), parents, linearY };
 }

@@ -65,7 +65,15 @@ real stage is designed with the owner one at a time; districts come next.
     `riverHop`). Per-cell averages made cliffs with irregular cells.
   - `ground.ts`: constrained Delaunay surfaces (`delaunator` + `constrainautor`, with an
     `earcut` fallback).
-  - `stage.ts`: assembly. About 3,200 triangles and about 100–120 ms warm at 2 km.
+  - `decimate.ts`: every region's finished surface is simplified. Interior vertices are
+    removed while the surface stays within 0.25 m on land and 0.5 m on beds. The tolerance
+    is checked at removed points and between vertices. Boundary vertices always stay, so
+    regions still meet exactly.
+  - `stage.ts`: assembly. About 3,400 stored triangles, and about 170 ms in Node, at 2 km
+    with the defaults.
+
+  **Polygon budget: terrain draws about 6,000 triangles at the defaults (ground plus water
+  surfaces), so later stages get the budget.** Check new terrain detail against it.
 
   **Fine detail is cosmetic, in the renderer's shader. Never add it to the geometry.**
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
@@ -83,12 +91,21 @@ real stage is designed with the owner one at a time; districts come next.
   (shows the site plus the current stage's regions; `groundHeightAt`; outlines drape over
   the ground), `slabMesh.ts` (merged mesh with a face → node lookup). The terrain renderer
   merges every region's `ground` into one mesh, then smooths it at draw time
-  (`scene/smoothMesh.ts`, pure and tested): Laplacian-smoothed normals, and one Phong
-  subdivision that curves midpoints by ≤ 1.25 m, straight at water edges. It renders with a
-  **TSL node material** (`three/tsl`): kind colours blended by two-octave jittered weights
-  for ragged edges, colour variation, noise bump, ≤ 0.75 m noise displacement (together with
-  the curve, within the 2 m cosmetic budget), a ragged wet-sand band at sea level, and
-  animated water. It picks by ground point (`nodeIdAt`) rather than by face. Stage renderers live in `scene/renderers/`, **not on the stage**,
+  (`scene/smoothMesh.ts`, pure and tested). Normals are Laplacian-smoothed. Edges are split
+  and curved by up to 1.25 m (Phong), but **only where curving moves the surface at least
+  0.3 m** (`CURVE_MIN`), never at water. Triangles are cut to match their split edges, so
+  there are no cracks. Water surfaces are drawn from their outlines alone. It renders with a
+  **TSL node material** (`three/tsl`). Per-pixel noise is read from a baked seamless tile
+  (`scene/noiseTile.ts`, four channels):
+  - kind colours blended by two-octave jittered weights, for ragged edges;
+  - colour variation, and a ragged wet-sand band at sea level.
+
+  The bump stays procedural (one noise per pixel): a bump read from the tile showed a regular
+  cross-hatch. Noise displacement is ≤ 0.75 m, which together with the curve stays within the
+  2 m cosmetic budget. There's also animated water. It picks by ground point (`nodeIdAt`)
+  rather than by face. The sun's shadow map is redrawn only for a second after the view changes (`shadow.autoUpdate = false`),
+  never while orbiting. The pixel ratio is capped at 1.5. Stage renderers live in
+  `scene/renderers/`, **not on the stage**,
   so the worker never bundles Three.js. The current stage's regions cover the site
   completely, so the site ground isn't drawn under them; drawing both z-fights.
 - `server.ts`: **the only listener.** Express serves the built frontend from `dist/`

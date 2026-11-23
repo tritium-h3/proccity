@@ -56,3 +56,46 @@ describe('smoothMesh', () => {
     }
   });
 });
+
+describe('adaptive subdivision (minDy)', () => {
+  /** Every edge used by exactly one or two triangles, and no vertex inside another
+   *  triangle's edge: a crack-free mesh. */
+  function watertight(pos: number[], tris: number[]) {
+    const count = new Map<string, number>();
+    for (let t = 0; t < tris.length; t += 3) for (let k = 0; k < 3; k++) {
+      const a = tris[t + k], b = tris[t + (k + 1) % 3], key = a < b ? `${a},${b}` : `${b},${a}`;
+      count.set(key, (count.get(key) ?? 0) + 1);
+    }
+    const used = new Set(tris);
+    for (const [key, n] of count) {
+      if (n > 2) return false;
+      const [a, b] = key.split(',').map(Number);
+      for (const v of used) {
+        if (v === a || v === b) continue;
+        const ax = pos[a * 3], az = pos[a * 3 + 2], bx = pos[b * 3], bz = pos[b * 3 + 2], vx = pos[v * 3], vz = pos[v * 3 + 2];
+        const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz, t = ((vx - ax) * dx + (vz - az) * dz) / L2;
+        if (t > 1e-6 && t < 1 - 1e-6 && Math.hypot(ax + dx * t - vx, az + dz * t - vz) < 1e-6) return false;
+      }
+    }
+    return true;
+  }
+
+  it('adds nothing on a plane', () => {
+    const { pos, weights, tris } = grid((x, z) => 0.2 * x + 0.1 * z);
+    const n = smoothNormals(pos, tris, faceNormals(pos, tris), 2);
+    const s = phongSubdivide(pos, weights, tris, n, { maxDy: 1.25, minDy: 0.3 });
+    expect(s.tris.length).toBe(tris.length);
+    expect(s.pos.length).toBe(pos.length);
+  });
+
+  it('splits only the curved part, and stays crack-free', () => {
+    // A plateau with a sharp bend down at x = 10: only edges near the bend curve much.
+    const { pos, weights, tris } = grid((x) => (x < 10 ? 0 : -(x - 10) * 0.8));
+    const n = smoothNormals(pos, tris, faceNormals(pos, tris), 2);
+    const all = phongSubdivide(pos, weights, tris, n, { maxDy: 1.25 });
+    const some = phongSubdivide(pos, weights, tris, n, { maxDy: 1.25, minDy: 0.3 });
+    expect(some.tris.length).toBeGreaterThan(tris.length);
+    expect(some.tris.length).toBeLessThan(all.tris.length);
+    expect(watertight(some.pos, some.tris)).toBe(true);
+  });
+});
