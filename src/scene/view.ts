@@ -6,6 +6,7 @@ import { findById, walk } from '../doc/tree.js';
 import { groundHeightAt } from '../doc/ground.js';
 import type { Point2, RegionNode } from '../doc/types.js';
 import type { Stage } from '../stages/types.js';
+import { heightSampler } from './heightSampler.js';
 import { RENDERERS, type PickableMesh } from './renderers/index.js';
 import { waterSurfaceAt } from './renderers/terrain.js';
 
@@ -20,7 +21,11 @@ export interface ViewState {
   exaggeration: number;
 }
 
-export interface BuiltView { group: THREE.Group; pickables: PickableMesh[]; dispose(): void }
+export interface BuiltView {
+  group: THREE.Group; pickables: PickableMesh[]; dispose(): void;
+  /** height of the ground as drawn (smoothed, exaggerated), when a stage drew terrain */
+  groundAt?: (x: number, z: number) => number;
+}
 
 function nodesOfStage(tree: RegionNode, stageId: string): RegionNode[] {
   const out: RegionNode[] = [];
@@ -31,12 +36,14 @@ function nodesOfStage(tree: RegionNode, stageId: string): RegionNode[] {
 export function buildView(v: ViewState): BuiltView {
   const group = new THREE.Group();
   const pickables: PickableMesh[] = [];
+  let drawn: { pos: ArrayLike<number>; tris: ArrayLike<number> } | undefined;
   const add = (stageId: string, nodes: RegionNode[], isCurrent: boolean) => {
     const render = RENDERERS[stageId];
     if (!render || nodes.length === 0) return;
     const r = render(nodes, { tree: v.tree, isCurrent, exaggeration: v.exaggeration });
     group.add(r.object);
     pickables.push(...r.pickables);
+    drawn = r.ground ?? drawn;
   };
 
   // The current stage's regions partition the site, so they cover it completely:
@@ -46,9 +53,16 @@ export function buildView(v: ViewState): BuiltView {
   if (currentNodes.length) add(current.id, currentNodes, true);
   else add('site', [v.tree], true);
 
+  // Outlines drape on the ground as drawn: the curve lifts it up to several metres at 30 km
+  // above the stored surface, which buried outlines on hilltops.
+  const b = v.tree.geometry.footprint[0]?.[0] ?? [];
+  const half = Math.max(0, ...b.map(p => Math.abs(p[0])));
+  let sampler: ((x: number, z: number) => number) | undefined;
+  const groundAt = drawn ? (x: number, z: number) => (sampler ??= heightSampler(drawn!.pos, drawn!.tris, { minX: -half, minZ: -half, size: 2 * half }, (2 * half) / 1500))(x, z) : undefined;
   return {
     group,
     pickables,
+    groundAt,
     dispose() {
       group.traverse(o => {
         // Renderers attach userData.dispose for what materials don't own (baked textures).
@@ -76,7 +90,8 @@ function densify(ring: Point2[], step: number): Point2[] {
 }
 
 /** Outline of a region's footprint: at its top when capped, draped 1 m over the ground when open. */
-export function outline(tree: RegionNode, id: string, colour: number, opacity: number, exaggeration = 1): THREE.Group | null {
+export function outline(tree: RegionNode, id: string, colour: number, opacity: number, exaggeration = 1,
+  groundAt?: (x: number, z: number) => number): THREE.Group | null {
   const node = findById(tree, id);
   if (!node) return null;
   const { high } = node.geometry.height;
@@ -92,8 +107,9 @@ export function outline(tree: RegionNode, id: string, colour: number, opacity: n
     const water = waterSurfaceAt(node);
     // Ground (and water) stretch with the exaggeration; heights above the ground don't.
     const k = exaggeration;
-    const y = (x: number, z: number) => high !== null ? groundHeightAt(tree, x, z) * k + high + 0.3
-      : Math.max(groundHeightAt(tree, x, z), water ? water([x, z]) : -Infinity) * k + 1;
+    const ground = groundAt ?? ((x: number, z: number) => groundHeightAt(tree, x, z) * k);
+    const y = (x: number, z: number) => high !== null ? ground(x, z) + high + 0.3
+      : Math.max(ground(x, z), water ? water([x, z]) * k : -Infinity) + 1;
     const pts = [...ring, ring[0]].map(([x, z]) => new THREE.Vector3(x, y(x, z), z));
     const g = new THREE.BufferGeometry().setFromPoints(pts);
     group.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: colour, transparent: opacity < 1, opacity })));

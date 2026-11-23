@@ -55,9 +55,9 @@ export const renderArterials: StageRenderer = (nodes, ctx) => {
   const deckTop = new Map(bridges.map(b => [b, Math.max(...b.geometry.footprint.flat(2).map(([x, z]) => heightAt(x, z))) + 1]));
   const pos: number[] = [], idx: number[] = [];
   for (const road of ctx.tree.data?.roads ?? []) {
-    const ownBridges = bridges.filter(b => b.attrs.road === road.id);
+    // Any bridge: two roads can share one crossing, with the deck under the earlier road's id.
     const yAt = (x: number, z: number) => {
-      const b = ownBridges.find(br => containsPoint(br.geometry.footprint, [x, z]));
+      const b = bridges.find(br => containsPoint(br.geometry.footprint, [x, z]));
       return b ? deckTop.get(b)! + 0.3 : heightAt(x, z) + LIFT;
     };
     const line = resample(road.points, Math.max(20, size / 300));

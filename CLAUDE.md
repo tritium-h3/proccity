@@ -159,8 +159,11 @@ roads is pinned for that design.
   the ground), `slabMesh.ts` (merged mesh with a face → node lookup). The terrain renderer
   merges every region's `ground` into one mesh, then smooths it at draw time
   (`scene/smoothMesh.ts`, pure and tested). Normals are Laplacian-smoothed. Edges are split
-  and curved by up to 1.25 m (Phong), but **only where curving moves the surface at least
-  0.3 m** (`CURVE_MIN`), never at water. Triangles are cut to match their split edges, so
+  and curved (Phong) by up to 1.25 m × √(site/2 km), about 4.8 m at 30 km, but **only where
+  curving moves the surface at least 0.3 m × the same factor** (`CURVE_MIN`), never at water.
+  The curve scales because 1.8 km triangles curved by 1.25 m still looked faceted; the owner
+  approved the look. Outlines and ribbons drape on the ground as drawn (`BuiltView.groundAt`,
+  `heightSampler`), not on the stored surface, or the curve buries them. Triangles are cut to match their split edges, so
   there are no cracks. Water surfaces are drawn from their outlines alone. It renders with a
   **TSL node material** (`three/tsl`). Per-pixel noise is read from a baked seamless tile
   (`scene/noiseTile.ts`, four channels):
@@ -168,8 +171,8 @@ roads is pinned for that design.
   - colour variation, and a ragged wet-sand band at sea level.
 
   The bump stays procedural (one noise per pixel): a bump read from the tile showed a regular
-  cross-hatch. Noise displacement is ≤ 0.75 m, which together with the curve stays within the
-  2 m cosmetic budget. There's also animated water. It picks by ground point (`nodeIdAt`)
+  cross-hatch. Noise displacement is ≤ 0.75 m. (At 2 km, with the curve, that's the 2 m cosmetic budget;
+  the curve's share grows with the site, above.) There's also animated water. It picks by ground point (`nodeIdAt`)
   rather than by face. The sun's shadow map is redrawn only for a second after the view changes (`shadow.autoUpdate = false`),
   never while orbiting. The pixel ratio is capped at 1.5. Stage renderers live in
   `scene/renderers/`, **not on the stage**,

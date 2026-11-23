@@ -109,7 +109,7 @@ export function createCityScene(container: HTMLElement): CityScene {
     if (b) fitToSite(Math.max(...b.map(p => Math.abs(p[0]))) * 2, groundHeightAt(v.tree, 0, 0) * v.exaggeration);
     clearOutline(selection);
     clearOutline(hover); hover = null; hoverId = null;
-    selection = v.selectedId ? outline(v.tree, v.selectedId, SELECT, 1, v.exaggeration) : null;
+    selection = v.selectedId ? outline(v.tree, v.selectedId, SELECT, 1, v.exaggeration, built.groundAt) : null;
     if (selection) scene.add(selection);
   }
 
@@ -159,7 +159,7 @@ export function createCityScene(container: HTMLElement): CityScene {
     if (id === hoverId) return; // same region: keep its outline
     hoverId = id;
     clearOutline(hover);
-    hover = id ? outline(view.tree, id, SELECT, 0.4, view.exaggeration) : null;
+    hover = id ? outline(view.tree, id, SELECT, 0.4, view.exaggeration, built?.groundAt) : null;
     if (hover) scene.add(hover);
   }
 

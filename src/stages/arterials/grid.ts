@@ -169,10 +169,13 @@ export function stepCost(g: Grid, a: number, b: number, heading: number, p: Cost
   const k = g.kind[b];
   const base = k === RIVER ? 30 * (1 + 4 * (1 - across(heading, g.riverNormal[b]))) : k === HILLS ? 1.5 : 1;
   const d = g.border[b];
-  const borderF = d <= p.roadWidth / 2 ? CORRIDOR : d < g.band ? 1 + 3 * (1 - across(heading, g.borderNormal[b])) : 1;
+  // "On" a border or road means within half a road width, or three-quarters of a cell when cells
+  // are bigger (at 100 m cells a 12.5 m test missed whole chains of cells).
+  const on = Math.max(p.roadWidth / 2, 0.75 * g.cell);
+  const borderF = d <= on ? CORRIDOR : d < g.band ? 1 + 3 * (1 - across(heading, g.borderNormal[b])) : 1;
   const edgeF = 1 + 0.3 * Math.max(0, Math.min(1, 1 - d / g.edgeScale));
   const r = g.road[b];
-  const roadF = r > p.roadWidth / 2 && r < p.usableWidth ? 1 + 3 * (1 - across(heading, g.roadNormal[b])) : 1;
+  const roadF = r > on && r < p.usableWidth ? 1 + 3 * (1 - across(heading, g.roadNormal[b])) : 1;
   // Beside water, running along the bank costs (a band there spills over the water).
   const bankF = g.bank[b] < p.roadWidth / 2 + g.bankExtra ? 1 + 3 * (1 - across(heading, g.bankNormal[b])) : 1;
   return len * base * gradeF * borderF * edgeF * roadF * bankF;

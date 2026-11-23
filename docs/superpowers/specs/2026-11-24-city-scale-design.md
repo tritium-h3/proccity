@@ -31,7 +31,10 @@ area", so only the **measurements** grow, not the generation.
 - Every distance a stage uses is either a setting with a scaled default, or derived from one
   (cell size, district size, spacing). Nothing layout-related stays hard-coded in metres.
 - Physical quantities don't scale: road width, max grade, the junction angle, and vertical
-  tolerances (the 2 m flat step, the decimation tolerances, the cosmetic shading budget).
+  tolerances (the 2 m flat step, the decimation tolerances). The cosmetic curve was meant to
+  stay too, but at 1.8 km triangles a 1.25 m curve looked faceted, so it scales with
+  √(site/2 km), about 4.8 m at 30 km. The owner approved the look, and outlines drape on the
+  drawn ground to match.
 
 ## Non-goals
 

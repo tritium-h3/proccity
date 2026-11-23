@@ -195,6 +195,28 @@ describe('arterials stage', () => {
     for (const d of districtsOf(tree)) expect(partition(d, out.children.get(d.id) ?? []), d.id).toEqual([]);
   }, 120_000);
 
+  it('at 30 km, bridges every river crossing and partitions the river', () => {
+    for (const seed of [1, 2, 3]) {
+      const site = createSite(30000);
+      const ts = defaultsFor(terrain.settings) as Settings;
+      let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(seed), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
+      tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: defaultsFor(districts.settings) as Settings, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children);
+      const as = defaultsFor(arterials.settings) as Settings;
+      const out = arterials.run({ tree, leaves: leaves(tree), settings: as, rng: createRng(seed * 13 + 5), attr: () => undefined, overridesForStage: [] });
+      const river = tree.children.find(c => c.kind === 'river')!;
+      const kids = out.children.get(river.id) ?? [];
+      if (kids.length) expect(partition(river, kids), `seed ${seed}`).toEqual([]);
+      // Every stretch of road over the river is on a bridge (its own, or a road it shares a
+      // crossing with).
+      const decks = offsetPolygons(kids.filter(k => k.kind === 'bridge').flatMap(k => k.geometry.footprint), 1);
+      for (const r of out.data!.get('site')!.roads!) {
+        const wet = samples(r.points, 5).filter(p => containsPoint(river.geometry.footprint, p));
+        const dry = wet.filter(p => !containsPoint(decks, p));
+        expect(dry.length, `seed ${seed} ${r.id}: ${dry.length * 5} m over the river off any bridge`).toBeLessThanOrEqual(2);
+      }
+    }
+  }, 120_000);
+
   it('is deterministic and quick', () => {
     const a = run({}, 2), b = run({}, 2);
     expect(a.roads).toEqual(b.roads);

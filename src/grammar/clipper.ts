@@ -10,7 +10,7 @@ import {
   Clipper, Clipper64, ClipType, EndType, FillRule, JoinType, PolyTree64,
   type Path64, type Paths64, type PolyPath64,
 } from 'clipper2-ts';
-import type { MultiPolygon, Point2, Polygon, Ring } from '../doc/types.js';
+import type { MultiPolygon, Point2, Ring } from '../doc/types.js';
 import { signedArea } from './polygon.js';
 
 export const SCALE = 1000;
@@ -25,28 +25,47 @@ function toPaths(mp: MultiPolygon): Paths64 {
   return out;
 }
 
-/** Rings out of Clipper, re-oriented: outers positive (CCW in x,z), holes negative. */
-function fromPath(path: Path64, outer: boolean): Ring {
-  const ring: Ring = path.map(p => [p.x / SCALE, p.y / SCALE] as Point2);
-  if ((signedArea(ring) > 0) !== outer) ring.reverse();
-  return ring;
+
+/** PolyTree → MultiPolygon. Rings are classed by their own orientation (Clipper writes outers
+ *  positive, holes negative) and each hole goes under the smallest outer containing it. The
+ *  tree's depth isn't trusted: with a cut-out whose corners lie exactly on edges that have no
+ *  vertices there, clipper2-ts put the hole ring beside its outer, so it came out as an extra
+ *  outer and the "difference" grew by what it should have removed (a river's water overlapped
+ *  its bridge). */
+function fromTree(tree: PolyPath64): MultiPolygon {
+  const rings: Ring[] = [];
+  const walk = (node: PolyPath64) => {
+    if (node.polygon && node.polygon.length >= 3) rings.push(node.polygon.map(p => [p.x / SCALE, p.y / SCALE] as Point2));
+    for (let i = 0; i < node.count; i++) walk(node.child(i));
+  };
+  for (let i = 0; i < tree.count; i++) walk(tree.child(i));
+  const outers = rings.filter(r => signedArea(r) > 0).map(r => ({ ring: r, area: signedArea(r), holes: [] as Ring[] }));
+  for (const hole of rings.filter(r => signedArea(r) < 0)) {
+    // A point surely inside the hole: its centroid works for the simple rings Clipper returns;
+    // fall back to a vertex nudged inward.
+    const probe = holeProbe(hole);
+    const home = outers.filter(o => inRing(o.ring, probe)).sort((x, y) => x.area - y.area)[0];
+    if (home) home.holes.push(hole);
+  }
+  return outers.map(o => [o.ring, ...o.holes]);
 }
 
-/** PolyTree → MultiPolygon: each outer with its holes; islands inside holes recurse. */
-function fromTree(tree: PolyPath64): MultiPolygon {
-  const out: MultiPolygon = [];
-  const visitOuter = (node: PolyPath64) => {
-    if (!node.polygon || node.polygon.length < 3) return;
-    const poly: Polygon = [fromPath(node.polygon, true)];
-    for (let i = 0; i < node.count; i++) {
-      const hole = node.child(i);
-      if (hole.polygon && hole.polygon.length >= 3) poly.push(fromPath(hole.polygon, false));
-      for (let j = 0; j < hole.count; j++) visitOuter(hole.child(j));
-    }
-    out.push(poly);
-  };
-  for (let i = 0; i < tree.count; i++) visitOuter(tree.child(i));
-  return out;
+function inRing(ring: Ring, p: Point2): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [ax, az] = ring[j], [bx, bz] = ring[i];
+    if ((bz > p[1]) !== (az > p[1]) && p[0] < ((ax - bx) * (p[1] - bz)) / (az - bz) + bx) inside = !inside;
+  }
+  return inside;
+}
+
+function holeProbe(hole: Ring): Point2 {
+  // Midpoint of an edge, nudged a hair to its inner side (left of travel for a CW hole is
+  // outside, so step right).
+  const [a, b] = [hole[0], hole[1]];
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const e = 1e-3;
+  return [(a[0] + b[0]) / 2 + ((b[1] - a[1]) / len) * e, (a[1] + b[1]) / 2 - ((b[0] - a[0]) / len) * e];
 }
 
 function boolean(type: ClipType, a: Paths64, b: Paths64 | null): MultiPolygon {

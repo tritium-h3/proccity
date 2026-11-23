@@ -189,7 +189,8 @@ export const arterials: Stage = {
     // The grid's road field still holds removed loops; rebuild it from what's left.
     g.road.fill(Infinity);
     for (const r of roads) markRoad(g, r.points);
-    const onRoad = (c: number) => g.road[c] <= s.roadWidth / 2;
+    // Within three-quarters of a cell too: at 100 m cells half a road width (12.5 m) missed cells.
+    const onRoad = (c: number) => g.road[c] <= Math.max(s.roadWidth / 2, 0.75 * g.cell);
 
     // 5b. One network: the mesh can fall into pieces (hubs either side of a bay with no allowed
     //     link), so join any stray piece to the main one with a connector.
@@ -317,7 +318,15 @@ export const arterials: Stage = {
       // A bridge is where a road's centreline actually crosses the river. A band grazing the
       // bank isn't one: its sliver stays water.
       const rfp = river.geometry.footprint;
-      const crosses = (r: Road) => r.points.some((p, i) => containsPoint(rfp, p) || (i + 1 < r.points.length && [0.25, 0.5, 0.75].some(t => containsPoint(rfp, [p[0] + (r.points[i + 1][0] - p[0]) * t, p[1] + (r.points[i + 1][1] - p[1]) * t]))));
+      // Sampled every road width: smoothed segments can be kilometres long, and a few samples per
+      // segment missed 150 m crossings, leaving them unbridged.
+      const crosses = (r: Road) => r.points.some((p, i) => {
+        if (containsPoint(rfp, p)) return true;
+        if (i + 1 >= r.points.length) return false;
+        const q = r.points[i + 1], n = Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / s.roadWidth);
+        for (let k = 1; k < n; k++) if (containsPoint(rfp, [p[0] + (q[0] - p[0]) * k / n, p[1] + (q[1] - p[1]) * k / n])) return true;
+        return false;
+      });
       const { kids } = cut(river, 'bridge', i => ({ road: roads[i].id }), (i, piece) => (crosses(roads[i]) ? piece.filter(poly => area([poly]) >= s.roadWidth * s.roadWidth / 2) : []));
       bridges = kids.length;
       if (kids.length) {
