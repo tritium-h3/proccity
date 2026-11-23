@@ -12,7 +12,7 @@ come next.
 
 ```bash
 npm install
-npm run dev        # https://localhost:5281 (API on 5282)
+npm run dev        # builds on save; Express serves https://localhost:5281 (app + API)
 npm test
 ```
 

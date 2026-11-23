@@ -91,7 +91,14 @@ real stage is designed with the owner one at a time; districts come next.
   animated water. It picks by ground point (`nodeIdAt`) rather than by face. Stage renderers live in `scene/renderers/`, **not on the stage**,
   so the worker never bundles Three.js. The current stage's regions cover the site
   completely, so the site ground isn't drawn under them; drawing both z-fights.
-- `server.ts`: placeholder Express backend (`/api/health`). `config.ts`: hosts and ports.
+- `server.ts`: **the only listener.** Express serves the built frontend from `dist/`
+  (`server/web.ts`: dotfiles ignored, nothing outside `dist/`, a 503 "Building…" page while
+  `index.html` is missing) plus the placeholder `/api/health`, over HTTPS (`server/tls.ts`;
+  a bad cert falls back to plain HTTP rather than a crash loop), with a 301 redirect from
+  HTTP (`server/redirect.ts`). `config.ts`: hosts, ports and TLS paths. **Never expose
+  `vite dev`:** after the 2026-11-22 cryptominer incident in pages (source, `/@fs/` and the
+  transform pipeline were public), proccity serves a build. Design:
+  `docs/superpowers/specs/2026-11-22-production-serving-design.md`.
 
 ## Three.js notes
 
@@ -119,17 +126,21 @@ real stage is designed with the owner one at a time; districts come next.
 **Git:** agents manage the repo. Feature work goes on a branch with a commit per task;
 `main` takes merged work. Pushing to GitHub needs the owner's OK.
 
-Runs as the systemd user service **`proccity`** (Vite + API via `concurrently`):
-- Vite (HTTPS) **5281**, API **5282**, HTTP→HTTPS redirect **5280**.
+Runs as the systemd user service **`proccity`**. `npm run dev` runs `vite build --watch` and
+`tsx watch ./src/server.ts` via `concurrently`:
+- HTTPS (app + API) **5281**, HTTP→HTTPS redirect **5280**. 5282 is retired but stays
+  reserved.
 - `npm run dev:restart`, `systemctl --user status proccity`, `journalctl --user -u proccity -f`
 - `npm test`, `npm run typecheck` (TypeScript 7), `npm run lint` (**oxlint**:
   typescript-eslint doesn't support TS 7 yet; oxlint is silent when clean),
   `npm run build` (the ~1 MB chunk warning is Three.js and expected).
 
-**Stale dev server:** two writes to the same file within a few milliseconds (an append, then
-an edit) can leave Vite serving the first version. Unit tests still pass, since Vitest
-reads fresh. If browser behaviour doesn't match the source, `curl -sk
-https://localhost:5281/src/<file>.ts` and compare. `npm run dev:restart` fixes it.
+**Save, then refresh.** There's no hot reload. A save rebuilds `dist/` in well under a second
+(`[web] built in …` in the journal). The service runs a **production** build, so the
+`import.meta.env.DEV` aids (the worker's partition check, the terrain mesh timing log) are
+off there. Tests still cover the partition invariant. The source isn't served, so if the
+browser doesn't match the source, check the journal for a build error or compare
+`dist/assets` timestamps; `npm run dev:restart` rebuilds from scratch.
 
 **Screenshot check:** headless Chrome's capture is 87px taller than the page viewport, so
 a dark strip along the bottom is an artefact, not a layout bug. Pass a window height

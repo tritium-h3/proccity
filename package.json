@@ -4,14 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -n vite,api -c cyan,magenta \"vite\" \"tsx watch ./src/server.ts\"",
+    "dev": "concurrently -n web,api -c cyan,magenta \"vite build --watch\" \"tsx watch ./src/server.ts\"",
     "dev:restart": "systemctl --user restart proccity",
     "build": "vite build && tsc --noEmit -p tsconfig.server.json",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.server.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "lint": "oxlint"
   },
   "dependencies": {
     "@kninnug/constrainautor": "^4.1.0",
