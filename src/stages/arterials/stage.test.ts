@@ -13,15 +13,16 @@ import { terrain } from '../terrain/stage.js';
 import { tightBends } from './smooth.js';
 import { slivers } from './space.js';
 import { arterials } from './stage.js';
+import { SMALL_SCALE } from '../testing.js';
 
 const cache = new Map<string, RegionNode>();
 function upToDistricts(terrainOver: Partial<Settings>, seed: number): RegionNode {
   const key = JSON.stringify([terrainOver, seed]);
   if (!cache.has(key)) {
     const site = createSite(2000);
-    const ts = { ...defaultsFor(terrain.settings), ...terrainOver } as Settings;
+    const ts = { ...defaultsFor(terrain.settings), ...SMALL_SCALE.terrain, ...terrainOver } as Settings;
     let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(seed), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
-    const ds = defaultsFor(districts.settings) as Settings;
+    const ds = { ...defaultsFor(districts.settings), ...SMALL_SCALE.districts } as Settings;
     tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: ds, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children);
     cache.set(key, tree);
   }
@@ -30,7 +31,7 @@ function upToDistricts(terrainOver: Partial<Settings>, seed: number): RegionNode
 
 function run(over: Partial<Settings> = {}, seed = 1, terrainOver: Partial<Settings> = {}) {
   const tree = upToDistricts(terrainOver, seed);
-  const settings = { ...defaultsFor(arterials.settings), ...over } as Settings;
+  const settings = { ...defaultsFor(arterials.settings), ...SMALL_SCALE.arterials, ...over } as Settings;
   const out = arterials.run({ tree, leaves: leaves(tree), settings, rng: createRng(seed * 13 + 5), attr: () => undefined, overridesForStage: [] });
   const site = out.data!.get('site')!;
   return { tree, out, roads: site.roads!, stats: site.stats!, settings };

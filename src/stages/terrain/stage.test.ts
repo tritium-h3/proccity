@@ -12,10 +12,12 @@ import { defaultsFor, resolveAttr } from '../settings.js';
 import { riverSurfaceAt } from './elevation.js';
 import { interiorPoint } from './cells.js';
 import { terrain } from './stage.js';
+import { SMALL_SCALE } from '../testing.js';
 
 function run(over: Partial<Settings> = {}, seed = 1, size = 2000, overrides: Override[] = []) {
   const site = createSite(size);
-  const settings = { ...defaultsFor(terrain.settings), ...over } as Settings;
+  // Tests here were written at the 2 km scale; scaled sizes pass their own settings.
+  const settings = { ...defaultsFor(terrain.settings), ...SMALL_SCALE.terrain, ...over } as Settings;
   const t = performance.now();
   const out = terrain.run({
     tree: site, leaves: leaves(site), settings, rng: createRng(seed),
@@ -182,6 +184,25 @@ describe('terrain v2 stage', () => {
     }
   }, 120_000);
 
+  it('keeps the same structure at 30 km as at the old 2 km scale', () => {
+    // The 30 km rescale grows the measurements, not the generation.
+    const fresh = defaultsFor(terrain.settings);
+    const scaled = Object.fromEntries(Object.keys(SMALL_SCALE.terrain).map(k => [k, fresh[k]])) as Partial<Settings>;
+    for (const seed of [1, 2]) {
+      const small = run({}, seed, SMALL_SCALE.site), big = run(scaled, seed, 30000);
+      const kinds = (r: typeof small) => { const m: Record<string, number> = {}; for (const c of r.children) m[c.kind] = (m[c.kind] ?? 0) + 1; return m; };
+      const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(2, 0.25 * b);
+      expect(near(big.stats.cells, small.stats.cells), `seed ${seed} cells ${big.stats.cells} vs ${small.stats.cells}`).toBe(true);
+      const tris = (r: typeof small) => r.children.reduce((t, c) => t + (c.data?.ground?.triangles.length ?? 0), 0);
+      expect(near(tris(big), tris(small)), `seed ${seed} triangles ${tris(big)} vs ${tris(small)}`).toBe(true);
+      // Kinds shift a little (the river is relatively narrower: 150 m, not 15 × 40), the total doesn't.
+      const kb = kinds(big), ks = kinds(small);
+      const land = (m: Record<string, number>) => (m.flat ?? 0) + (m.slope ?? 0) + (m.hills ?? 0);
+      expect(near(land(kb), land(ks)), `seed ${seed} land regions ${land(kb)} vs ${land(ks)}`).toBe(true);
+      for (const k of Object.keys(ks)) expect(Math.abs((kb[k] ?? 0) - ks[k]) <= Math.max(2, 0.5 * ks[k]), `seed ${seed} ${k}: ${kb[k]} vs ${ks[k]}`).toBe(true);
+    }
+  });
+
   it('handles a 5000 m site (timing logged)', () => {
     const r = run({}, 3, 5000);
     console.log(`terrain v2 5000 m: ${r.stats.cells} cells, ${r.ms.toFixed(0)} ms`);
@@ -266,7 +287,7 @@ describe('terrain v2 review fixes', () => {
       const pts = rf.data!.ground!.points;
       const inner = pts.reduce((a, b) => (b[2] > a[2] ? b : a));
       const doc: CityDoc = {
-        ...createCityDoc({ name: 'T', seed: 1, now: 'n', id: 'c', stages: [{ id: 'terrain', defaults: defaultsFor(terrain.settings) }] }),
+        ...createCityDoc({ name: 'T', seed: 1, now: 'n', id: 'c', size: SMALL_SCALE.site, stages: [{ id: 'terrain', defaults: { ...defaultsFor(terrain.settings), ...SMALL_SCALE.terrain } }] }),
         generatedThrough: 0,
         overrides: [{ id: 'o', stage: 'terrain', kind: 'flat', anchor: [inner[0], inner[1]], settings: { elevation: 1 }, createdAt: 't' }],
       };

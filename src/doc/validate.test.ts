@@ -37,11 +37,11 @@ describe('parseCityDoc', () => {
 });
 
 describe('createCityDoc', () => {
-  it('starts ungenerated with a 2 km open site', () => {
+  it('starts ungenerated with a 30 km open site', () => {
     const d = doc();
     expect(d.format).toBe('proccity/1');
     expect(d.generatedThrough).toBe(-1);
-    expect(d.site.size).toBe(2000);
+    expect(d.site.size).toBe(30000);
     expect(d.stages).toEqual([{ id: 'debug-grid', settings: { cells: 6 }, seedOffset: 0 }]);
     expect(d.tree.geometry.height).toEqual({ ref: 'ground', low: 0, high: null });
   });

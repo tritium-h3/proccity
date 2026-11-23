@@ -115,19 +115,19 @@ export const terrain: Stage = {
   id: 'terrain',
   title: 'Terrain',
   settings: [
-    { key: 'relief', label: 'Relief', type: 'number', min: 20, max: 400, step: 10, default: 150, unit: 'm', help: 'Height range across the site' },
+    { key: 'relief', label: 'Relief', type: 'number', min: 100, max: 1600, step: 50, default: 600, unit: 'm', help: 'Height range across the site' },
     { key: 'hilliness', label: 'Hilliness', type: 'number', min: 0, max: 1, step: 0.05, default: 0.5, help: 'More hills, and bumpier ground' },
     { key: 'shore', label: 'Shore', type: 'choice', default: 'south', options: [
       { value: 'none', label: 'None' }, { value: 'north', label: 'North' }, { value: 'east', label: 'East' },
       { value: 'south', label: 'South' }, { value: 'west', label: 'West' }] },
     { key: 'river', label: 'River', type: 'boolean', default: true },
-    { key: 'riverWidth', label: 'River width', type: 'number', min: 10, max: 120, step: 5, default: 40, unit: 'm' },
+    { key: 'riverWidth', label: 'River width', type: 'number', min: 40, max: 450, step: 10, default: 150, unit: 'm' },
     { key: 'flatWidth', label: 'Flat width', type: 'number', min: 0, max: 5, step: 1, default: 2, help: 'How many cells deep the coastal and river flats run' },
     { key: 'ponds', label: 'Ponds', type: 'number', min: 0, max: 6, step: 1, default: 2 },
-    { key: 'pondSize', label: 'Pond size', type: 'number', min: 0.5, max: 10, step: 0.5, default: 4, unit: 'ha', help: 'Roughly how big each pond grows' },
-    { key: 'cellSize', label: 'Cell size', type: 'number', min: 60, max: 250, step: 10, default: 120, unit: 'm', help: 'How finely the land is divided' },
+    { key: 'pondSize', label: 'Pond size', type: 'number', min: 100, max: 2250, step: 50, default: 900, unit: 'ha', help: 'Roughly how big each pond grows' },
+    { key: 'cellSize', label: 'Cell size', type: 'number', min: 900, max: 3750, step: 150, default: 1800, unit: 'm', help: 'How finely the land is divided' },
     { key: 'irregularity', label: 'Irregularity', type: 'number', min: 0, max: 1, step: 0.05, default: 0.5, help: 'How many cells are cut into wedges and triangles' },
-    { key: 'regionSize', label: 'Region size', type: 'number', min: 5, max: 100, step: 5, default: 20, unit: 'ha', help: 'Big areas are cut into regions of about this size' },
+    { key: 'regionSize', label: 'Region size', type: 'number', min: 1000, max: 22500, step: 500, default: 4500, unit: 'ha', help: 'Big areas are cut into regions of about this size' },
   ],
   overridable: {
     flat: [{ key: 'elevation', label: 'Elevation', type: 'number', min: 1, max: 400, step: 1, default: 3, unit: 'm' }],
@@ -173,7 +173,8 @@ export const terrain: Stage = {
     // water is always safe; a straight descent left the lower river perched above the
     // coastal plain.
     if (course && profile && water.sea) {
-      const reach = s.riverWidth / 2 + 55;
+      // Distances scale with the cell size (they were metres at 120 m cells: 55, 25, 10, 90, 4/16).
+      const reach = s.riverWidth / 2 + 0.45 * s.cellSize;
       const fixed = cells.flatMap((cell, i) =>
         // A sea-touching cell's shore band sits at 0.5 m whatever its kind, so that wins.
         cell.touchesSea ? [{ cell, level: 0.5 }] : classified.flatType[i] === 'coastal' ? [{ cell, level: 2 + cell.hop }] : []);
@@ -263,11 +264,11 @@ export const terrain: Stage = {
         // Course points about every 25 m (the grid's spacing); every one (~8 m apart) only
         // added triangles under the water.
         ...course.flatMap((p, i): [number, number, number][] => {
-          if (i > 0 && i < course.length - 1 && Math.hypot(p[0] - course[lastBed][0], p[1] - course[lastBed][1]) < 25) return [];
+          if (i > 0 && i < course.length - 1 && Math.hypot(p[0] - course[lastBed][0], p[1] - course[lastBed][1]) < s.cellSize / 5) return [];
           lastBed = i;
           return [[p[0], p[1], profile[i] - RIVER_DEPTH]];
         }),
-        ...bedPoints(water.river.polygon, 25, bedAt),
+        ...bedPoints(water.river.polygon, s.cellSize / 5, bedAt),
       ];
       // Edge points that aren't land corners border water (the sea at the mouth): bed, not bank.
       const ground = decimate(constrainedSurface(water.river.polygon, p => {
@@ -292,13 +293,13 @@ export const terrain: Stage = {
         const len = Math.hypot(bx - ax, bz - az) || 1;
         const nx = -(bz - az) / len, nz = (bx - ax) / len;
         for (const sgn of [1, -1]) {
-          const q: Point2 = [coast[k][0] + nx * 10 * sgn, coast[k][1] + nz * 10 * sgn];
+          const q: Point2 = [coast[k][0] + nx * (s.cellSize / 12) * sgn, coast[k][1] + nz * (s.cellSize / 12) * sgn];
           if (containsPoint(water.sea, q)) { shelf.push([q[0], q[1], -2]); break; }
         }
       }
       const bed = (p: Point2) => Math.min(-2, depth(p));
       const ground = decimate(constrainedSurface(water.sea, p => vertexElevation(p) ?? riverEdge.get(vkey(p)) ?? depth(p),
-        [...shelf, ...bedPoints(water.sea, 90, bed)]), BED_TOLERANCE);
+        [...shelf, ...bedPoints(water.sea, 0.75 * s.cellSize, bed)]), BED_TOLERANCE);
       out.push(node('sea', 'sea', water.sea, { water: 'salt', flow: 'still', surface: 0 }, { ground }));
     }
     if (riverNode) out.push(riverNode);
@@ -332,7 +333,7 @@ export const terrain: Stage = {
         // A ring of bed points just inside the shore is enough: no triangle can join bank
         // points across the pond past it, and the bed inside is flat (a grid only added
         // triangles under the water).
-        interior.push(...insetBedPoints(fp, 4, 16, surface - POND_DEPTH));
+        interior.push(...insetBedPoints(fp, s.cellSize / 30, s.cellSize / 7.5, surface - POND_DEPTH));
       }
       const ground = decimate(constrainedSurface(fp, p => vertexElevation(p) ?? fallback(p), interior), g.kind === 'pond' ? BED_TOLERANCE : LAND_TOLERANCE);
       const name = `${g.kind}:${counters[g.kind]++}`;

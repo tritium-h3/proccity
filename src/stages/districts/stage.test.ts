@@ -11,6 +11,7 @@ import { tableViolations } from './fill.js';
 import { buildGraph, isWide, type DistrictInfo } from './graph.js';
 import { allowedOn, budgets, type DistrictType, type TerrainKind } from './rules.js';
 import { districts } from './stage.js';
+import { SMALL_SCALE } from '../testing.js';
 import { union } from '../../grammar/clipper.js';
 
 const LAND = new Set(['flat', 'slope', 'hills']);
@@ -29,7 +30,7 @@ function withTerrain(over: Partial<Settings>, seed: number): RegionNode {
   const key = JSON.stringify([over, seed]);
   if (!terrainCache.has(key)) {
     const site = createSite(2000);
-    const settings = { ...defaultsFor(terrain.settings), ...over } as Settings;
+    const settings = { ...defaultsFor(terrain.settings), ...SMALL_SCALE.terrain, ...over } as Settings;
     const out = terrain.run({ tree: site, leaves: leaves(site), settings, rng: createRng(seed), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, settings), overridesForStage: [] });
     terrainCache.set(key, attachChildren(site, out.children));
   }
@@ -38,7 +39,7 @@ function withTerrain(over: Partial<Settings>, seed: number): RegionNode {
 
 function run(over: Partial<Settings> = {}, seed = 1, terrainOver: Partial<Settings> = {}, overrides: Override[] = []) {
   const tree = withTerrain(terrainOver, seed);
-  const settings = { ...defaultsFor(districts.settings), ...over } as Settings;
+  const settings = { ...defaultsFor(districts.settings), ...SMALL_SCALE.districts, ...over } as Settings;
   const out = districts.run({ tree, leaves: leaves(tree), settings, rng: createRng(seed * 7 + 1), attr: (n, k) => resolveAttr(ancestry(tree, n.id), k, settings), overridesForStage: overrides });
   const regions = tree.children;
   const all = [...out.children.values()].flat();
@@ -149,7 +150,7 @@ describe('districts stage', () => {
 
   it('makes nothing without terrain', () => {
     const site = createSite(2000);
-    const settings = defaultsFor(districts.settings) as Settings;
+    const settings = { ...defaultsFor(districts.settings), ...SMALL_SCALE.districts } as Settings;
     const out = districts.run({ tree: site, leaves: leaves(site), settings, rng: createRng(1), attr: () => undefined, overridesForStage: [] });
     expect([...out.children.values()].flat()).toEqual([]);
   });

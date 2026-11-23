@@ -109,7 +109,7 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
   // Smooth height field over position: blends nearby cells' base heights by distance
   // (Gaussian, about one cell wide). Per-cell averages made near-vertical facets wherever
   // irregular cells put close vertices among very different cells.
-  const sigma = Math.max(30, Math.sqrt(cells.reduce((t, c) => t + c.area, 0) / Math.max(1, cells.length)) * 0.8);
+  const sigma = Math.sqrt(cells.reduce((t, c) => t + c.area, 0) / Math.max(1, cells.length)) * 0.8;
   const G = sigma * 2.5;
   const seedGrid = new Map<string, number[]>();
   cells.forEach((cell, i) => {

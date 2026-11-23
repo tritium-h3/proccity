@@ -21,7 +21,7 @@ export function StagePanel({ editor }: { editor: CityEditor }) {
       {currentStage === -1 && (
         <div className={styles.stageBody}>
           <SettingField
-            field={{ key: 'size', label: 'Site size', type: 'number', min: 500, max: 5000, step: 100, default: 2000, unit: 'm' }}
+            field={{ key: 'size', label: 'Site size', type: 'number', min: 5000, max: 60000, step: 1000, default: 30000, unit: 'm' }}
             value={doc.site.size}
             onChange={(v, k) => actions.setSite({ size: v as number }, k)}
           />

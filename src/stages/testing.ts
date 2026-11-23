@@ -77,3 +77,12 @@ export const fakeAnnotate: Stage = {
 };
 
 export const FAKE_STAGES: Stage[] = [fakeGrid, fakeSplit];
+
+/** The settings every stage had before the 30 km rescale (2026-11-24), for tests written at the
+ *  2 km scale: with these, a 2 km site generates as it always did. */
+export const SMALL_SCALE = {
+  site: 2000,
+  terrain: { cellSize: 120, regionSize: 20, pondSize: 4, relief: 150, riverWidth: 40 },
+  districts: { districtSize: 8 },
+  arterials: { spacing: 700, usableWidth: 60, curveRadius: 60 },
+};

@@ -69,12 +69,14 @@ export function layoutWater(i: WaterInput): Water {
   if (i.shore !== 'none') {
     const amp = COAST_WIGGLE * 0.15 * size;
     const v0 = h - COAST_INSET * size;
-    for (let u = -h - 50; u <= h + 50; u += 20) {
+    // Steps and margins relative to the site (they were 20, 50 and 100 m at 2 km).
+    const ext = size / 40;
+    for (let u = -h - ext; u <= h + ext; u += size / 100) {
       const n = noise(u / (size / 2.5), 0.5) * 0.7 + noise(u / (size / 8), 3.7) * 0.3;
       localCoast.push([u, v0 + n * amp]);
     }
     coastline = localCoast.map(toWorld);
-    const corners: Point2[] = [[h + 50, h + 100], [-h - 50, h + 100]];
+    const corners: Point2[] = [[h + ext, h + 2 * ext], [-h - ext, h + 2 * ext]];
     const ring: Point2[] = [...localCoast, ...corners].map(toWorld);
     sea = intersect(union([[ring]], []), site);
   }
@@ -103,10 +105,10 @@ export function layoutWater(i: WaterInput): Water {
     const course = chaikin(midpointDisplace(src, mouth, 5, 0.35 * MEANDER, rng, onLand), 3);
     // Extend past both ends so the band reaches the site edge and runs into the sea.
     const banded = [extend(course[0], course[1], i.riverWidth), ...course, extend(course[course.length - 1], course[course.length - 2], i.riverWidth)];
-    // The polygon comes from a copy of the course simplified to within 0.5 m: the smoothed
+    // The polygon comes from a copy of the course simplified to within size/4000 (0.5 m at 2 km): the smoothed
     // course has hundreds of points, and every one became two outline points (and land
     // cell corners, and triangles). The full course stays as data for the water surface.
-    let polygon = intersect(offsetPolyline(simplifyLine(banded, 0.5), i.riverWidth / 2), site);
+    let polygon = intersect(offsetPolyline(simplifyLine(banded, size / 4000), i.riverWidth / 2), site);
     if (sea) polygon = difference(polygon, sea);
     // One river: keep the main piece; stray bits (a mouth extension poking through a coastal
     // bulge, a bend clipped by the sea) are left to the land.

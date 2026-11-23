@@ -1,6 +1,6 @@
 import { FORMAT, SITE_ID, type CityDoc, type RegionNode, type Settings } from './types.js';
 
-export const DEFAULT_SITE_SIZE = 2000;
+export const DEFAULT_SITE_SIZE = 30000;
 
 /** The root region: a square open slab centred on the origin. */
 export function createSite(size: number): RegionNode {
@@ -26,7 +26,10 @@ export function createCityDoc(opts: {
   seed: number;
   now: string;
   id: string;
+  /** site size in metres (default DEFAULT_SITE_SIZE) */
+  size?: number;
 }): CityDoc {
+  const size = opts.size ?? DEFAULT_SITE_SIZE;
   return {
     format: FORMAT,
     id: opts.id,
@@ -34,10 +37,10 @@ export function createCityDoc(opts: {
     createdAt: opts.now,
     modifiedAt: opts.now,
     seed: opts.seed,
-    site: { size: DEFAULT_SITE_SIZE },
+    site: { size },
     stages: opts.stages.map(s => ({ id: s.id, settings: { ...s.defaults }, seedOffset: 0 })),
     generatedThrough: -1,
     overrides: [],
-    tree: createSite(DEFAULT_SITE_SIZE),
+    tree: createSite(size),
   };
 }
