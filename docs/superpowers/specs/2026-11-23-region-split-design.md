@@ -62,6 +62,11 @@ At the defaults (2 km, four seeds), the largest land region is 50–80 ha. There
   target. Among those, it has the lowest `cut length / sqrt(smaller piece's area)`. A neck
   is short compared with what it joins, so it scores well. A cut across a uniform strip only
   wins when the strip has no neck and is too big. If no cut is legal, the group stays whole.
+- **A group with no legal cut is final.** It leaves the queue and is never looked at again.
+  The search scores every candidate at once, so there's no next-best cut to retry. Splitting
+  never merges, so a final group never changes. Each successful cut makes two new, strictly
+  smaller groups, each judged once on its own. So the loop always ends, after at most one
+  cut per cell.
 - **Deterministic:** it uses no rng, so it disturbs no other random draw. Every terrain
   result is unchanged apart from the splits.
 - **Names:** pieces are numbered with the existing per-kind counters (`flat:0`, `flat:1`, …).
