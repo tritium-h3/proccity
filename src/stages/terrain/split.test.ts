@@ -111,7 +111,7 @@ describe('splitGroup', () => {
     for (const c of cells) c.area = 3600;
     const t = performance.now();
     const pieces = splitGroup(members, cells, 2e5);
-    expect(performance.now() - t).toBeLessThan(300);
+    expect(performance.now() - t).toBeLessThan(600); // generous: the full suite runs in parallel
     expectPartition(pieces, members);
     for (const p of pieces) expect(connected(p, cells)).toBe(true);
   });

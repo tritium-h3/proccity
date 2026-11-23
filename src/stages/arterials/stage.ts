@@ -13,7 +13,7 @@ import { difference, intersect, offsetPolyline, union } from '../../grammar/clip
 import { area, bounds, centroid, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
 import type { Stage } from '../types.js';
-import { BLOCKED, buildGrid, cellOf, centreOf, HILLS, LAND, markRoad, RIVER, stepCost, type CostParams, type Grid } from './grid.js';
+import { BLOCKED, buildGrid, cellOf, centreOf, HILLS, LAND, markRoad, RIVER, stepCost, type CostParams } from './grid.js';
 import { placeExits, poissonHubs } from './hubs.js';
 import { buildMesh } from './mesh.js';
 import { route } from './route.js';
