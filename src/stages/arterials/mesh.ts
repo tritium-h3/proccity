@@ -9,7 +9,7 @@ import type { Point2 } from '../../doc/types.js';
 export interface Link { a: number; b: number; required: boolean }
 
 export function buildMesh(hubs: Point2[], cost: (a: number, b: number) => number,
-  o: { redundancy: number; minAngle: number; maxLen: number; blocked: (a: number, b: number) => boolean }): { links: Link[]; sharp: number } {
+  o: { redundancy: number; minAngle: number; maxLen: number; blocked: (a: number, b: number) => boolean }): { links: Link[]; sharp: number; candidates: number } {
   const n = hubs.length;
   const pairs = new Set<string>();
   const add = (a: number, b: number) => pairs.add(a < b ? `${a},${b}` : `${b},${a}`);
@@ -55,5 +55,5 @@ export function buildMesh(hubs: Point2[], cost: (a: number, b: number) => number
     const ds = links.filter(l => l.a === h || l.b === h).map(l => dir(h, l.a === h ? l.b : l.a));
     for (let x = 0; x < ds.length; x++) for (let y = x + 1; y < ds.length; y++) if (angle(ds[x], ds[y]) < o.minAngle) sharp++;
   }
-  return { links, sharp };
+  return { links, sharp, candidates: candidates.length };
 }

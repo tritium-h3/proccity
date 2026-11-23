@@ -297,7 +297,7 @@ export const arterials: Stage = {
       data: new Map([[tree.id, {
         roads: roads.map(r => ({ id: r.id, points: r.points, exit: r.exit })),
         stats: {
-          links: mesh.links.length, loops: roads.filter(r => !r.required && !r.exit).length, exits: exitCount, bridges,
+          hubs: hubs.length, candidates: mesh.candidates, links: mesh.links.length, loops: roads.filter(r => !r.required && !r.exit).length, exits: exitCount, bridges,
           unreachable, spurs, connectors, sharpJunctions: mesh.sharp,
           tightCurves: roads.reduce((n, r) => n + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),
