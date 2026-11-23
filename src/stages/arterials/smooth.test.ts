@@ -18,7 +18,7 @@ describe('smoothRoad', () => {
   });
 
   it('shrinks the arc where the legs are too short, and that shows as a tight bend', () => {
-    const s = smoothRoad([[-15, 0], [0, 0], [0, 15]], 60);
+    const s = smoothRoad([[-25, 0], [0, 0], [0, 25]], 60);
     expect(tightBends(s, 60)).toBeGreaterThan(0);
   });
 });

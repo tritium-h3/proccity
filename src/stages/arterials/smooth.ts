@@ -6,7 +6,9 @@
 import type { Point2 } from '../../doc/types.js';
 import { simplifyLine } from '../../grammar/polygon.js';
 
-const SIMPLIFY = 3;   // m
+// m: grid paths step every 20–45 m, too short to fit a curve radius between corners; dropping
+// vertices within this of the line leaves segments long enough for the arcs.
+const SIMPLIFY = 12;
 const ARC_STEP = 10;  // m between arc points
 
 export function smoothRoad(line: Point2[], radius: number): Point2[] {

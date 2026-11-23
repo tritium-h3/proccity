@@ -30,6 +30,8 @@ export interface CostParams { maxGrade: number; roadWidth: number; usableWidth: 
 
 const BORDER_BAND = 40;   // m beside a border where running parallel costs
 const EDGE_SCALE = 125;   // m: about half a district; cost rises gently towards its edges
+// Cost on a district border. At 0.5 roads traced every jag of the (Voronoi) borders.
+const CORRIDOR = 0.75;
 const ROAD_REACH = 160;   // m: how far a placed road's influence is recorded (≥ max usable width)
 
 export const cellOf = (g: Grid, x: number, z: number) => {
@@ -105,7 +107,7 @@ export function stepCost(g: Grid, a: number, b: number, heading: number, p: Cost
   const k = g.kind[b];
   const base = k === RIVER ? 30 * (1 + 4 * (1 - across(heading, g.riverNormal[b]))) : k === HILLS ? 1.5 : 1;
   const d = g.border[b];
-  const borderF = d <= p.roadWidth / 2 ? 0.5 : d < BORDER_BAND ? 1 + 3 * (1 - across(heading, g.borderNormal[b])) : 1;
+  const borderF = d <= p.roadWidth / 2 ? CORRIDOR : d < BORDER_BAND ? 1 + 3 * (1 - across(heading, g.borderNormal[b])) : 1;
   const edgeF = 1 + 0.3 * Math.max(0, Math.min(1, 1 - d / EDGE_SCALE));
   const r = g.road[b];
   const roadF = r > p.roadWidth / 2 && r < p.usableWidth ? 1 + 3 * (1 - across(heading, g.roadNormal[b])) : 1;

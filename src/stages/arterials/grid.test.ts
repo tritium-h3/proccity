@@ -45,7 +45,7 @@ describe('stepCost', () => {
     const g = grid({ districts: [rect(0, 0, 200, 400), rect(200, 0, 400, 400)] });
     const along = step(g, 195, 105, N), inside = step(g, 85, 105, N);
     const parallelNear = step(g, 175, 105, N), crossing = step(g, 175, 105, E);
-    expect(along).toBeLessThanOrEqual(0.7 * inside);
+    expect(along).toBeLessThanOrEqual(0.9 * inside);
     expect(parallelNear).toBeGreaterThan(along);
     expect(parallelNear).toBeGreaterThan(crossing);
   });

@@ -21,6 +21,8 @@ export interface RouteOpts {
   /** the heading (rad) the route must leave in, e.g. into the site from an exit */
   startHeading?: number;
   goal: { cell: number } | { touches: (cell: number) => boolean };
+  /** for a `touches` goal: a point to aim at (guides the search; the goal still decides) */
+  toward?: Point2;
 }
 
 /** Binary min-heap of [priority, state]. */
@@ -68,7 +70,7 @@ const nearestHeading = (rad: number) => {
 
 export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null {
   const { params } = opts;
-  const turn = opts.turnPenalty ?? 0.15;
+  const turn = opts.turnPenalty ?? 0.4;
   const n = g.w * g.h;
   const cost = new Float64Array(n * H).fill(Infinity);
   const prev = new Int32Array(n * H).fill(-1);
@@ -76,8 +78,8 @@ export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null 
   const s = (() => { const i = Math.min(g.w - 1, Math.max(0, Math.floor((start[0] - g.minX) / g.cell))), j = Math.min(g.h - 1, Math.max(0, Math.floor((start[1] - g.minZ) / g.cell))); return j * g.w + i; })();
   const goalCell = 'cell' in opts.goal ? opts.goal.cell : -1;
   const touches = 'touches' in opts.goal ? opts.goal.touches : null;
-  const [gx, gz] = goalCell >= 0 ? centreOf(g, goalCell) : [0, 0];
-  const h = (c: number) => { if (goalCell < 0) return 0; const [x, z] = centreOf(g, c); return 0.5 * Math.hypot(gx - x, gz - z); };
+  const aim = goalCell >= 0 ? centreOf(g, goalCell) : opts.toward ?? null;
+  const h = (c: number) => { if (!aim) return 0; const [x, z] = centreOf(g, c); return 0.5 * Math.hypot(aim[0] - x, aim[1] - z); };
   const heads = opts.startHeading !== undefined ? [nearestHeading(opts.startHeading)] : [...Array(H).keys()];
   for (const k of heads) { cost[s * H + k] = 0; heap.push(h(s), s * H + k); }
 

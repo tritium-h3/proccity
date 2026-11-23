@@ -72,8 +72,10 @@ export function offsetPolygons(a: MultiPolygon, delta: number): MultiPolygon {
   return boolean(ClipType.Union, paths, null);
 }
 
-/** Widen an open polyline into a band `2 * halfWidth` wide, square-cut (butt) ends. */
-export function offsetPolyline(line: Point2[], halfWidth: number): MultiPolygon {
-  const paths = Clipper.inflatePaths([toPath(line)], halfWidth * SCALE, JoinType.Miter, EndType.Butt);
+/** Widen an open polyline into a band `2 * halfWidth` wide. Ends are square-cut (butt) by
+ *  default; roads use round ends, so bands meeting at a junction always overlap and leave no
+ *  notch on the outside of the turn. */
+export function offsetPolyline(line: Point2[], halfWidth: number, ends: 'butt' | 'round' = 'butt'): MultiPolygon {
+  const paths = Clipper.inflatePaths([toPath(line)], halfWidth * SCALE, JoinType.Miter, ends === 'round' ? EndType.Round : EndType.Butt);
   return boolean(ClipType.Union, paths, null);
 }
