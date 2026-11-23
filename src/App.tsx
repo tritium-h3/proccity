@@ -14,6 +14,9 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<CityScene | null>(null);
   const [backend, setBackend] = useState<string | null>(null);
+  // Display-only height stretch, remembered in this browser (not part of the city).
+  const [exaggeration, setExaggeration] = useState(() => Number(localStorage.getItem('proccity.exaggeration')) || 2);
+  useEffect(() => { localStorage.setItem('proccity.exaggeration', String(exaggeration)); }, [exaggeration]);
 
   useEffect(() => {
     const scene = createCityScene(containerRef.current!);
@@ -29,13 +32,13 @@ export default function App() {
   useEffect(() => {
     if (!doc) return;
     sceneRef.current?.setView({
-      tree: doc.tree, stages: STAGES, generatedThrough: doc.generatedThrough, currentStage, selectedId,
+      tree: doc.tree, stages: STAGES, generatedThrough: doc.generatedThrough, currentStage, selectedId, exaggeration,
     });
-  }, [doc, currentStage, selectedId]);
+  }, [doc, currentStage, selectedId, exaggeration]);
 
   return (
     <div className={styles.app}>
-      <Toolbar editor={editor} backend={backend} />
+      <Toolbar editor={editor} backend={backend} exaggeration={exaggeration} onExaggeration={setExaggeration} />
       <StagePanel editor={editor} />
       <div className={styles.viewWrap}>
         <div ref={containerRef} className={styles.viewport} />

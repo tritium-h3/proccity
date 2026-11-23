@@ -15,6 +15,9 @@ export interface ViewState {
   generatedThrough: number;
   currentStage: number;
   selectedId: string | null;
+  /** vertical exaggeration of the ground (display only): structures keep their real heights
+   *  and sit on the stretched ground */
+  exaggeration: number;
 }
 
 export interface BuiltView { group: THREE.Group; pickables: PickableMesh[]; dispose(): void }
@@ -31,7 +34,7 @@ export function buildView(v: ViewState): BuiltView {
   const add = (stageId: string, nodes: RegionNode[], isCurrent: boolean) => {
     const render = RENDERERS[stageId];
     if (!render || nodes.length === 0) return;
-    const r = render(nodes, { tree: v.tree, isCurrent });
+    const r = render(nodes, { tree: v.tree, isCurrent, exaggeration: v.exaggeration });
     group.add(r.object);
     pickables.push(...r.pickables);
   };
@@ -73,7 +76,7 @@ function densify(ring: Point2[], step: number): Point2[] {
 }
 
 /** Outline of a region's footprint: at its top when capped, draped 1 m over the ground when open. */
-export function outline(tree: RegionNode, id: string, colour: number, opacity: number): THREE.Group | null {
+export function outline(tree: RegionNode, id: string, colour: number, opacity: number, exaggeration = 1): THREE.Group | null {
   const node = findById(tree, id);
   if (!node) return null;
   const { high } = node.geometry.height;
@@ -87,8 +90,10 @@ export function outline(tree: RegionNode, id: string, colour: number, opacity: n
     // A closed Line, not LineLoop: WebGPURenderer doesn't support LineLoop.
     // Over water the ground is the bed; draw on the water surface instead, or it's hidden.
     const water = waterSurfaceAt(node);
-    const y = (x: number, z: number) => high !== null ? groundHeightAt(tree, x, z) + high + 0.3
-      : Math.max(groundHeightAt(tree, x, z), water ? water([x, z]) : -Infinity) + 1;
+    // Ground (and water) stretch with the exaggeration; heights above the ground don't.
+    const k = exaggeration;
+    const y = (x: number, z: number) => high !== null ? groundHeightAt(tree, x, z) * k + high + 0.3
+      : Math.max(groundHeightAt(tree, x, z), water ? water([x, z]) : -Infinity) * k + 1;
     const pts = [...ring, ring[0]].map(([x, z]) => new THREE.Vector3(x, y(x, z), z));
     const g = new THREE.BufferGeometry().setFromPoints(pts);
     group.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: colour, transparent: opacity < 1, opacity })));

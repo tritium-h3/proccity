@@ -8,7 +8,11 @@ import { renderDistricts } from './districts.js';
 import { renderSite } from './site.js';
 import { renderTerrain } from './terrain.js';
 
-export interface RenderContext { tree: RegionNode; isCurrent: boolean }
+export interface RenderContext {
+  tree: RegionNode; isCurrent: boolean;
+  /** ground heights are drawn × this; anything built on the ground keeps its own height */
+  exaggeration: number;
+}
 export interface PickableMesh {
   mesh: THREE.Mesh;
   /** face-based lookup (merged slab meshes) */

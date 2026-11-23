@@ -182,6 +182,11 @@ roads is pinned for that design.
   as drawn (`scene/heightSampler.ts`, from the smoothed mesh), sampled every site/300. They
   run at deck height over bridges. Bridge decks are geometry too. At 30 km a road is under 2
   pixels of any baked texture.
+  **Height exaggeration** (the toolbar's Height ×, 1–4, default 2, kept in localStorage, not in
+  the city) stretches only the drawn ground and water (`RenderContext.exaggeration`). Anything
+  built on the ground (roads, bridge decks, outlines, later buildings) sits on the stretched
+  ground at its real height above it, so structures are deliberately out of scale. That's the
+  owner's call. Generation always uses real heights.
   The camera's depth, zoom limits, shadow depth range and bias, and the shader's noise
   frequencies all follow the site size. **No hover work runs while a mouse button is held,**
   and the hover outline is rebuilt only when the hovered region changes. Rebuilding it every

@@ -35,7 +35,7 @@ export function tintedTerrain(ctx: RenderContext, polys: { footprint: MultiPolyg
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
-  const base = buildTerrain(terrainNodes, { tint: { texture: tex, minX: b.minX, minZ: b.minZ, size } });
+  const base = buildTerrain(terrainNodes, { tint: { texture: tex, minX: b.minX, minZ: b.minZ, size }, exaggeration: ctx.exaggeration });
   const pickables = base.pickables.map(p => ({
     mesh: p.mesh,
     nodeIdAt: (pt: Point2) => pick.find(n => containsPoint(n.geometry.footprint, pt))?.id ?? p.nodeIdAt?.(pt) ?? null,

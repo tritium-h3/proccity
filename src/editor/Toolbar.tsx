@@ -5,7 +5,9 @@ import styles from './editor.module.css';
 
 const SAVE_LABEL = { idle: '', saving: 'saving…', saved: 'saved ✓', error: 'not saved — storage unavailable' } as const;
 
-export function Toolbar({ editor, backend }: { editor: CityEditor; backend: string | null }) {
+export function Toolbar({ editor, backend, exaggeration, onExaggeration }: {
+  editor: CityEditor; backend: string | null; exaggeration: number; onExaggeration: (v: number) => void;
+}) {
   const { doc, cities, saveState, generating, canUndo, canRedo, actions } = editor;
   const [menuOpen, setMenuOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -49,6 +51,10 @@ export function Toolbar({ editor, backend }: { editor: CityEditor; backend: stri
       </span>
 
       <span className={styles.spacer} />
+      <label className={styles.heightScale} title="Stretch the ground's heights in the view (roads and buildings keep their real size)">
+        Height ×{exaggeration}
+        <input type="range" min={1} max={4} step={0.5} value={exaggeration} onChange={e => onExaggeration(Number(e.target.value))} />
+      </label>
       {backend && <span className={styles.backend}>{backend}</span>}
       <button className={styles.small} onClick={actions.download} disabled={!doc}>Download</button>
       <button className={styles.small} onClick={() => fileRef.current?.click()}>Open</button>

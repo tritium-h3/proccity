@@ -49,7 +49,7 @@ export const renderArterials: StageRenderer = (nodes, ctx) => {
   const sb = bounds(ctx.tree.geometry.footprint);
   const size = Math.max(sb.maxX - sb.minX, sb.maxZ - sb.minZ);
   const width = Number(nodes.find(n => n.kind === 'arterial')?.attrs.width ?? 25);
-  const heightAt = out.ground ? heightSampler(out.ground.pos, out.ground.tris, { minX: sb.minX, minZ: sb.minZ, size }, size / 1500) : (x: number, z: number) => groundHeightAt(ctx.tree, x, z);
+  const heightAt = out.ground ? heightSampler(out.ground.pos, out.ground.tris, { minX: sb.minX, minZ: sb.minZ, size }, size / 1500) : (x: number, z: number) => groundHeightAt(ctx.tree, x, z) * ctx.exaggeration;
   // Over a bridge a ribbon runs at the deck: draped on the drawn ground it dived to the riverbed
   // and showed through the water as a dark strip beside every deck.
   const deckTop = new Map(bridges.map(b => [b, Math.max(...b.geometry.footprint.flat(2).map(([x, z]) => heightAt(x, z))) + 1]));

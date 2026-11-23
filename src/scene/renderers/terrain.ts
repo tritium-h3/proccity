@@ -64,7 +64,7 @@ function noiseTexture(): THREE.DataTexture {
 export interface GroundTint { texture: THREE.DataTexture; minX: number; minZ: number; size: number }
 
 // Cosmetic noise was tuned at 2 km; `scale` = site size / 2000 keeps its features in proportion.
-function groundMaterial(tint: GroundTint | undefined, scale: number): THREE.MeshStandardNodeMaterial {
+function groundMaterial(tint: GroundTint | undefined, scale: number, exaggeration: number): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.95, metalness: 0 });
   const xz = positionWorld.xz;
   // Four independent noises (about -1..1) at `freq` features per metre; `offset` shifts the
@@ -81,7 +81,7 @@ function groundMaterial(tint: GroundTint | undefined, scale: number): THREE.Mesh
   const misc = N(0.1, 0.71);
   let colour = c(0).mul(s.x).add(c(1).mul(s.y)).add(c(2).mul(s.z)).add(c(3).mul(s.w)).div(total);
   colour = colour.mul(float(1).add(misc.x.mul(0.08)));                         // colour variation
-  const wet = float(1).sub(positionWorld.y.add(misc.y.mul(0.8)).sub(0.6).div(0.9).clamp(0, 1)); // wet sand below ~1.5 m
+  const wet = float(1).sub(positionWorld.y.div(exaggeration).add(misc.y.mul(0.8)).sub(0.6).div(0.9).clamp(0, 1)); // wet sand below ~1.5 m (real height)
   colour = mix(colour, vec3(SAND.r, SAND.g, SAND.b), wet.mul(float(1).sub(s.w.div(total))));
   if (tint) {
     const t = texture(tint.texture, xz.sub(vec2(tint.minX, tint.minZ)).div(tint.size));
@@ -107,10 +107,11 @@ function waterMaterial(hex: number, scale: number): THREE.MeshStandardNodeMateri
   return m;
 }
 
-export const renderTerrain: StageRenderer = nodes => buildTerrain(nodes, {});
+export const renderTerrain: StageRenderer = (nodes, ctx) => buildTerrain(nodes, { exaggeration: ctx.exaggeration });
 
 /** The terrain's ground and water, optionally tinted (later stages reuse it as their base). */
-export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): Rendered {
+export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint; exaggeration?: number }): Rendered {
+  const vk = opts.exaggeration ?? 1;
   const t0 = performance.now();
   const group = new THREE.Group();
   // Old v1 cities have no ground data: draw their regions flat at 0 so they still show.
@@ -137,7 +138,7 @@ export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): 
       if (i === undefined) {
         i = pos.length / 3;
         index.set(k, i);
-        pos.push(x, y, z);
+        pos.push(x, y * vk, z);
         weights.push(0, 0, 0, 0);
         counts.push(0);
       }
@@ -163,7 +164,7 @@ export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): 
   geo.setAttribute('weights', new THREE.Float32BufferAttribute(sub.weights, 4));
   geo.setAttribute('normal', new THREE.BufferAttribute(n1, 3));
   geo.setIndex(sub.tris);
-  const ground = new THREE.Mesh(geo, groundMaterial(opts.tint, scale));
+  const ground = new THREE.Mesh(geo, groundMaterial(opts.tint, scale, vk));
   ground.castShadow = true;
   ground.receiveShadow = true;
   group.add(ground);
@@ -182,7 +183,7 @@ export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): 
       const ccw = (bx - ax) * (cz - az) - (cx - ax) * (bz - az) > 0;
       for (const i of ccw ? [a, c, b] : [a, b, c]) {
         const [x, z] = g.points[i];
-        wp.push(x, surface([x, z]), z);
+        wp.push(x, surface([x, z]) * vk, z);
       }
     }
     const wg = new THREE.BufferGeometry();
