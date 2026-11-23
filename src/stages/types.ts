@@ -45,4 +45,7 @@ export interface Stage {
   /** Per-region override check beyond the schema (e.g. a flat can't go below the river beside
    *  it). Returns a reason fragment if the value is invalid there; null if fine. */
   validateOverride?(node: RegionNode, key: string, value: SettingValue): string | null;
+  /** Regions with the same scope are one target for overrides (the newest wins across them),
+   *  e.g. the pieces of one split terrain flat share a level. Defaults to the node id. */
+  overrideScope?(node: RegionNode): string;
 }

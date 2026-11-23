@@ -44,33 +44,51 @@ function hops(piece: number[], cells: GraphCell[], start: number): Map<number, n
   return d;
 }
 
-/** Approximate Fiedler vector by power iteration on cI − L, deflating the constant vector. */
+/** Approximate Fiedler vector by power iteration on cI − L, deflating the constant vector.
+ *  The sweep needs only the order of the cells, not an exact vector, so it stops once the order
+ *  holds steady between checks. Full convergence took 2,000 rounds per cut on big groups,
+ *  since the shift makes the ratio between eigenvalues close to 1. */
 function fiedler(piece: number[], cells: GraphCell[], start: number[]): number[] {
   const n = piece.length, idx = new Map(piece.map((c, i) => [c, i]));
-  const adj = piece.map(c => {
-    const out: [number, number][] = [];
-    cells[c].neighbours.forEach((nb, k) => { const j = idx.get(nb); if (j !== undefined) out.push([j, cells[c].edge[k]]); });
-    return out;
+  // Compressed adjacency: neighbours of i are nbr[off[i]..off[i+1]), with weights w.
+  const off = new Int32Array(n + 1), nbr: number[] = [], w: number[] = [];
+  const deg = new Float64Array(n);
+  piece.forEach((c, i) => {
+    cells[c].neighbours.forEach((nb, k) => {
+      const j = idx.get(nb);
+      if (j !== undefined) { nbr.push(j); w.push(cells[c].edge[k]); deg[i] += cells[c].edge[k]; }
+    });
+    off[i + 1] = nbr.length;
   });
-  const deg = adj.map(a => a.reduce((s, [, w]) => s + w, 0));
   const shift = 2 * Math.max(...deg) + 1;
-  let v = start.slice();
-  const normalise = (x: number[]) => {
-    const mean = x.reduce((a, b) => a + b, 0) / n;
-    const y = x.map(e => e - mean);
-    const len = Math.hypot(...y) || 1;
-    return y.map(e => e / len);
+  let v = Float64Array.from(start), next = new Float64Array(n);
+  const normalise = (x: Float64Array) => {
+    let mean = 0;
+    for (let i = 0; i < n; i++) mean += x[i];
+    mean /= n;
+    let len = 0;
+    for (let i = 0; i < n; i++) { x[i] -= mean; len += x[i] * x[i]; }
+    len = Math.sqrt(len) || 1;
+    for (let i = 0; i < n; i++) x[i] /= len;
   };
-  v = normalise(v);
-  for (let it = 0; it < 2000; it++) {
-    const next = v.map((vi, i) => (shift - deg[i]) * vi + adj[i].reduce((s, [j, w]) => s + w * v[j], 0));
-    const nv = normalise(next);
-    let change = 0;
-    for (let i = 0; i < n; i++) change = Math.max(change, Math.abs(nv[i] - v[i]));
-    v = nv;
-    if (change < 1e-9) break;
+  const order = (x: Float64Array) => Array.from(x.keys()).sort((p, q) => x[p] - x[q] || p - q).join();
+  normalise(v);
+  let last = order(v);
+  for (let it = 1; it <= 1000; it++) {
+    for (let i = 0; i < n; i++) {
+      let acc = (shift - deg[i]) * v[i];
+      for (let k = off[i]; k < off[i + 1]; k++) acc += w[k] * v[nbr[k]];
+      next[i] = acc;
+    }
+    normalise(next);
+    [v, next] = [next, v];
+    if (it % 25 === 0) {
+      const now = order(v);
+      if (now === last) break;
+      last = now;
+    }
   }
-  return v;
+  return Array.from(v);
 }
 
 /** The best legal cut of a connected piece, or null when there is none. */
@@ -87,9 +105,12 @@ function bestCut(piece: number[], cells: GraphCell[], target: number): [number[]
   const f = fiedler(piece, cells, dist);
   const orders = [f, dist].map(key => piece.map((c, i) => ({ c, k: key[i] })).sort((a, b) => a.k - b.k || a.c - b.c).map(e => e.c));
 
-  let best: [number[], number[]] | null = null, bestScore = Infinity;
+  // Score every prefix of both orders first, then test connectivity best-first: checking each
+  // improving prefix as the sweep went was O(n²) on big groups.
+  const candidates: { score: number; order: number[]; k: number }[] = [];
+  const inside = new Set(piece);
   for (const order of orders) {
-    const inPrefix = new Set<number>(), inside = new Set(piece);
+    const inPrefix = new Set<number>();
     let area = 0, cut = 0;
     for (let k = 0; k < order.length - 1; k++) {
       const u = order[k];
@@ -100,16 +121,15 @@ function bestCut(piece: number[], cells: GraphCell[], target: number): [number[]
         cut += inPrefix.has(nb) ? -cells[u].edge[j] : cells[u].edge[j];
       });
       const small = Math.min(area, total - area);
-      if (small < minPiece) continue;
-      const score = cut / Math.sqrt(small);
-      if (score >= bestScore) continue;
-      const a = order.slice(0, k + 1), b = order.slice(k + 1);
-      if (!isConnected(a, cells) || !isConnected(b, cells)) continue;
-      best = [a.sort(byId), b.sort(byId)];
-      bestScore = score;
+      if (small >= minPiece) candidates.push({ score: cut / Math.sqrt(small), order, k });
     }
   }
-  return best;
+  candidates.sort((x, y) => x.score - y.score || orders.indexOf(x.order) - orders.indexOf(y.order) || x.k - y.k);
+  for (const { order, k } of candidates) {
+    const a = order.slice(0, k + 1), b = order.slice(k + 1);
+    if (isConnected(a, cells) && isConnected(b, cells)) return [a.sort(byId), b.sort(byId)];
+  }
+  return null;
 }
 
 /** Split a group of cells into pieces of about `target` (m²) at its necks. Pieces are sorted

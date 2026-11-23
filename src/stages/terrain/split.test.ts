@@ -103,4 +103,16 @@ describe('splitGroup', () => {
     expectPartition(pieces, members);
     for (const p of pieces) expect(connected(p, cells)).toBe(true);
   });
+
+  it('splits a large group quickly', () => {
+    // A 5 km site at 60 m cells makes groups of a thousand cells or more; an unconverged power
+    // iteration (2,000 rounds per cut) once took 1.5 s here at 20 ha.
+    const { cells, members } = gridGraph(40, 40, () => true, () => 60);
+    for (const c of cells) c.area = 3600;
+    const t = performance.now();
+    const pieces = splitGroup(members, cells, 2e5);
+    expect(performance.now() - t).toBeLessThan(300);
+    expectPartition(pieces, members);
+    for (const p of pieces) expect(connected(p, cells)).toBe(true);
+  });
 });

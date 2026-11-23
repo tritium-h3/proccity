@@ -139,6 +139,11 @@ export const terrain: Stage = {
     return value < min ? `elevation: ${value} (the minimum here is ${min} m, beside the river)` : null;
   },
 
+  // A split flat's pieces share one level, so an edit on any piece is an edit to all of them.
+  overrideScope(node) {
+    return node.kind === 'flat' && typeof node.attrs.levelGroup === 'number' ? `flat-level:${node.attrs.levelGroup}` : node.id;
+  },
+
   run({ leaves, settings, rng, overridesForStage }) {
     const site = leaves.find(l => l.kind === 'site');
     if (!site) return { children: new Map() };
@@ -196,7 +201,8 @@ export const terrain: Stage = {
       // This stage's own overrides shape its output: flat elevation, matched by anchor. One
       // below the flat's minimum is ignored here and dropped (with a toast) by resolution.
       const overrides: { group: number; elevation: number }[] = [];
-      for (const o of overridesForStage) {
+      // Oldest first, so the newest override on a flat (on any of its pieces) wins.
+      for (const o of [...overridesForStage].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
         const e = o.settings.elevation;
         if (o.kind !== 'flat' || typeof e !== 'number') continue;
         const gi = groups.findIndex(g => g.kind === 'flat' && g.cells.some(ci => containsPoint([cells[ci].poly], o.anchor)));
@@ -222,17 +228,20 @@ export const terrain: Stage = {
       ({ levels, minLevel } = levelsFor(groups));
     }
     const vertexElevation = (p: Point2) => levels.vertex.get(vkey(p));
+    // The unsplit flat each region came from: its pieces share one level and one override scope.
+    let levelGroup: number[] = groups.map((_, gi) => gi);
 
     // Big land regions are cut at their necks into pieces of about regionSize. This runs after
     // levels, so a flat's pieces keep its one level (and its minimum) and stay flush.
     {
-      const split: RegionGroup[] = [], splitMin: number[] = [];
+      const split: RegionGroup[] = [], splitMin: number[] = [], splitParent: number[] = [];
       groups.forEach((g, gi) => {
         const pieces = g.kind === 'flat' || g.kind === 'slope' || g.kind === 'hills' ? splitGroup(g.cells, cells, s.regionSize * 1e4) : [g.cells];
-        for (const p of pieces) { split.push({ ...g, cells: p }); splitMin.push(minLevel[gi]); }
+        for (const p of pieces) { split.push({ ...g, cells: p }); splitMin.push(minLevel[gi]); splitParent.push(gi); }
       });
       groups = split;
       minLevel = splitMin;
+      levelGroup = splitParent;
     }
 
     // 5. Regions with their ground surfaces.
@@ -333,7 +342,7 @@ export const terrain: Stage = {
         const lv = g.cells.map(ci => levels.flatLevel[ci]!);
         out.push(node(name, 'flat', fp, {
           elevation: Math.round(lv.reduce((a, b) => a + b, 0) / lv.length),
-          minElevation: minLevel[gi],
+          minElevation: minLevel[gi], levelGroup: levelGroup[gi],
           coastal: g.flatType === 'coastal', riverFlat: g.flatType === 'river',
         }, { ground }));
       } else {

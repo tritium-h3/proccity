@@ -17,7 +17,7 @@ export function resolveOverrides(stage: Stage, created: RegionNode[], overrides:
   const kept: Override[] = [];
   const dropped: DroppedOverride[] = [];
   const mine = overrides.filter(o => o.stage === stage.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const landed = new Map<string, Override[]>(); // node id → overrides on it, oldest first
+  const landed = new Map<string, { o: Override; nodeId: string }[]>(); // scope → overrides on it, oldest first
 
   for (const o of mine) {
     const under = created.filter(n => containsPoint(n.geometry.footprint, o.anchor));
@@ -41,15 +41,16 @@ export function resolveOverrides(stage: Stage, created: RegionNode[], overrides:
       dropped.push({ override: o, reason: 'invalid-setting', detail: regional });
       continue;
     }
-    landed.set(node.id, [...(landed.get(node.id) ?? []), o]);
+    const scope = stage.overrideScope?.(node) ?? node.id;
+    landed.set(scope, [...(landed.get(scope) ?? []), { o, nodeId: node.id }]);
   }
 
   const applied = new Map<string, Settings>();
   const survivors = new Set<Override>();
-  for (const [nodeId, list] of landed) {
+  for (const list of landed.values()) {
     // Newest first: an override loses if a newer one already claimed any of its keys.
     const claimed = new Set<string>();
-    for (const o of [...list].reverse()) {
+    for (const { o } of [...list].reverse()) {
       const keys = Object.keys(o.settings);
       if (keys.some(k => claimed.has(k))) {
         dropped.push({ override: o, reason: 'superseded', detail: '' });
@@ -58,9 +59,7 @@ export function resolveOverrides(stage: Stage, created: RegionNode[], overrides:
       keys.forEach(k => claimed.add(k));
       survivors.add(o);
     }
-    const merged: Settings = {};
-    for (const o of list) if (survivors.has(o)) Object.assign(merged, o.settings);
-    applied.set(nodeId, merged);
+    for (const { o, nodeId } of list) if (survivors.has(o)) applied.set(nodeId, { ...applied.get(nodeId), ...o.settings });
   }
 
   for (const o of overrides) if (o.stage !== stage.id || survivors.has(o)) kept.push(o);

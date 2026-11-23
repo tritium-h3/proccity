@@ -76,4 +76,20 @@ describe('resolveOverrides', () => {
     const r = resolveOverrides(stage, [zone('upper', 40, null), zone('lower', 0, 40)], [ov([0, 0], { tag: true }, { stage: 'test', kind: 'zone' })]);
     expect([...r.applied.keys()]).toEqual(['site/lower']);
   });
+
+  it('treats regions sharing an override scope as one target: the newest wins', () => {
+    // e.g. the pieces of one split terrain flat share a level, so edits on two pieces conflict.
+    const scoped: Stage = { ...debugGrid, overrideScope: n => (n.id === 'site/cell:0-0' || n.id === 'site/cell:1-0' ? 'pair' : n.id) };
+    const a = cells.find(c => c.id === 'site/cell:0-0')!, b = cells.find(c => c.id === 'site/cell:1-0')!;
+    const mid = (n: RegionNode): [number, number] => {
+      const ring = n.geometry.footprint[0][0];
+      return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length];
+    };
+    const older = ov(mid(a), { colour: 'violet' });
+    const newer = ov(mid(b), { colour: 'teal' });
+    const r = resolveOverrides(scoped, cells, [older, newer]);
+    expect(r.dropped.map(d => [d.override.id, d.reason])).toEqual([[older.id, 'superseded']]);
+    expect(r.applied.get(b.id)).toEqual({ colour: 'teal' });
+    expect(r.applied.has(a.id)).toBe(false);
+  });
 });

@@ -152,6 +152,22 @@ describe('terrain v2 stage', () => {
         }
       }
     });
+    it('makes the pieces of a flat one override target, where the newest edit wins', () => {
+      for (const seed of [1, 2, 3, 4]) {
+        const flats = run({}, seed).children.filter(c => c.kind === 'flat');
+        const a = flats.find(f => flats.some(g => g !== f && terrain.overrideScope!(g) === terrain.overrideScope!(f)));
+        if (!a) continue;
+        const b = flats.find(g => g !== a && terrain.overrideScope!(g) === terrain.overrideScope!(a))!;
+        expect(terrain.overrideScope!(a)).not.toBe(a.id);
+        const min = Math.max(Number(a.attrs.minElevation), Number(b.attrs.minElevation));
+        const at = (n: RegionNode) => interiorPoint(n.geometry.footprint[0]);
+        const o = (n: RegionNode, elevation: number, t: string): Override => ({ id: t, stage: 'terrain', kind: 'flat', anchor: at(n), settings: { elevation }, createdAt: `2026-11-23T00:00:0${t}.000Z` });
+        const kids = run({}, seed, 2000, [o(b, min + 30, '2'), o(a, min + 10, '1')]).children;
+        for (const n of [a, b]) expect(kids.find(k => containsPoint(k.geometry.footprint, at(n)) && k.kind === 'flat')!.attrs.elevation).toBe(min + 30);
+        return;
+      }
+      throw new Error('no split flat in seeds 1–4');
+    });
   });
 
   it('survives setting extremes with the partition intact', () => {

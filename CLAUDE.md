@@ -34,7 +34,9 @@ real stage is designed with the owner one at a time; districts come next.
   editor builds UI from it) and optional per-kind `overridable` local settings, and its
   `run()` attaches children to leaves and may annotate existing regions
   (`StageOutput.data`). It also receives `overridesForStage`, for stages whose overrides
-  shape their own output (terrain's flat `elevation`). Stages are pure: no DOM, no
+  shape their own output (terrain's flat `elevation`). An optional `overrideScope(node)` makes
+  several regions one override target, where the newest edit wins across them; terrain uses it
+  so a split flat's pieces, which share a level, can't hold conflicting elevations. Stages are pure: no DOM, no
   Three.js. Test-only fake stages live in `stages/testing.ts` and are never in `STAGES`. Attributes
   inherit down the tree through `resolveAttr` (own > ancestors > stage setting).
   **Adding a stage:** a module, a line in `stages/index.ts`, and a renderer in
