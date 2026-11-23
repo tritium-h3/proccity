@@ -9,10 +9,11 @@ import { difference, offsetPolygons, union } from '../../grammar/clipper.js';
 import { area, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
 import type { Stage } from '../types.js';
+import type { RegionGroup } from './rules.js';
 import { buildCells, vkey } from './cells.js';
 import { computeLevels, riverSurfaceAt } from './elevation.js';
 import { constrainedSurface } from './ground.js';
-import { classify, mergeRegions } from './rules.js';
+import { classify, mergeRegions, steppedFlats } from './rules.js';
 import { roundPonds } from './ponds.js';
 import { layoutWater, riverProfile, type Shore } from './water.js';
 
@@ -148,7 +149,7 @@ export const terrain: Stage = {
     // 2–3. Cells, classification, regions.
     const cells = buildCells(land, footprint, water.sea, water.river?.polygon ?? null, s.cellSize, rng, s.irregularity);
     const classified = classify(cells, { flatWidth: s.flatWidth, hilliness: s.hilliness, ponds: s.ponds, pondSize: s.pondSize }, rng);
-    const groups = mergeRegions(cells, classified);
+    let groups = mergeRegions(cells, classified);
     // Ponds get curved shorelines (cell edges made them very polygonal), before elevations so
     // levels and ground meshes are built on the rounded cells.
     roundPonds(cells, i => classified.kind[i] === 'pond', 0.25 * s.cellSize);
@@ -175,27 +176,43 @@ export const terrain: Stage = {
       profile = capped.map(v => Math.round(v * 100) / 100);
     }
 
-    // A river flat can't sit below the river beside it: its lowest legal level is half a metre
-    // above the highest river surface at any of its cells' corners.
-    const minLevel = groups.map(g => (g.kind === 'flat' && course && profile && g.cells.some(ci => cells[ci].touchesRiver || cells[ci].nearest === 'river')
-      ? Math.ceil(Math.max(...g.cells.flatMap(ci => cells[ci].poly[0].map(p => riverSurfaceAt(course, profile, p)))) + 0.5)
-      : 1));
+    // Levels draw their noise from the rng once, replayed on every pass below, so re-running
+    // them after a reclassification is deterministic (and the first pass is unchanged).
+    const noise = cells.map(() => rng());
+    const levelsFor = (groups: RegionGroup[]) => {
+      // A river flat can't sit below the river beside it: its lowest legal level is half a
+      // metre above the highest river surface at any of its cells' corners.
+      const minLevel = groups.map(g => (g.kind === 'flat' && course && profile && g.cells.some(ci => cells[ci].touchesRiver || cells[ci].nearest === 'river')
+        ? Math.ceil(Math.max(...g.cells.flatMap(ci => cells[ci].poly[0].map(p => riverSurfaceAt(course, profile, p)))) + 0.5)
+        : 1));
+      // This stage's own overrides shape its output: flat elevation, matched by anchor. One
+      // below the flat's minimum is ignored here and dropped (with a toast) by resolution.
+      const overrides: { group: number; elevation: number }[] = [];
+      for (const o of overridesForStage) {
+        const e = o.settings.elevation;
+        if (o.kind !== 'flat' || typeof e !== 'number') continue;
+        const gi = groups.findIndex(g => g.kind === 'flat' && g.cells.some(ci => containsPoint([cells[ci].poly], o.anchor)));
+        if (gi >= 0 && e >= minLevel[gi]) overrides.push({ group: gi, elevation: Math.max(1, Math.round(e)) });
+      }
+      let i = 0;
+      const levels = computeLevels(cells, classified, groups, {
+        relief: s.relief, hilliness: s.hilliness, flatWidth: s.flatWidth, course, profile,
+        sea: water.sea, river: water.river?.polygon ?? null, overrides,
+      }, () => noise[i++]);
+      return { levels, minLevel };
+    };
 
-    // This stage's own overrides shape its output: flat elevation, matched by anchor. One
-    // below the flat's minimum is ignored here and dropped (with a toast) by resolution.
-    const overrides: { group: number; elevation: number }[] = [];
-    for (const o of overridesForStage) {
-      const e = o.settings.elevation;
-      if (o.kind !== 'flat' || typeof e !== 'number') continue;
-      const gi = groups.findIndex(g => g.kind === 'flat' && g.cells.some(ci => containsPoint([cells[ci].poly], o.anchor)));
-      if (gi >= 0 && e >= minLevel[gi]) overrides.push({ group: gi, elevation: Math.max(1, Math.round(e)) });
+    // 4. Elevations. Flats at very different levels never touch: the higher flat's cells along
+    //    the contact become slope, so the drop is a slope cell instead of a tilted flat. A
+    //    shelf's level is its cells' average, so levels are recomputed after each change.
+    let { levels, minLevel } = levelsFor(groups);
+    for (let pass = 0; pass < 6; pass++) {
+      const flip = steppedFlats(cells, classified, groups, levels.flatLevel);
+      if (!flip.length) break;
+      for (const ci of flip) { classified.kind[ci] = 'slope'; classified.flatType[ci] = null; }
+      groups = mergeRegions(cells, classified);
+      ({ levels, minLevel } = levelsFor(groups));
     }
-
-    // 4. Elevations.
-    const levels = computeLevels(cells, classified, groups, {
-      relief: s.relief, hilliness: s.hilliness, flatWidth: s.flatWidth, course, profile,
-      sea: water.sea, river: water.river?.polygon ?? null, overrides,
-    }, rng);
     const vertexElevation = (p: Point2) => levels.vertex.get(vkey(p));
 
     // 5. Regions with their ground surfaces.

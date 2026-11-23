@@ -52,7 +52,10 @@ real stage is designed with the owner one at a time; districts come next.
     then smoothing (votes weighted by shared edge length), flat subtypes (coastal, river,
     shelf), ponds (seeded, then grown to about `pondSize` hectares; no contact at all, not even
     a corner, with sea, river, another pond or the site edge), and merging same-kind cells,
-    ponds included, into regions.
+    ponds included, into regions. `steppedFlats` keeps flats at very different levels from
+    touching: where cells of two flat regions touch, even at a corner, and differ by more than
+    `FLAT_STEP` (2 m), the higher cell becomes slope. The stage repeats this with fresh levels
+    until it's stable.
   - `ponds.ts`: rounded pond shorelines, made before elevations. Shoreline edges are
     subdivided, then their vertices Gaussian-smoothed. Each vertex moves in every ring that
     holds it, so the partition stays exact. Moves that would fold or cross a cell are refused.

@@ -139,3 +139,25 @@ export function mergeRegions(cells: Cell[], c: Classified): RegionGroup[] {
   }
   return groups;
 }
+
+/** The most two touching flat regions may differ in level (m). */
+export const FLAT_STEP = 2;
+
+/** Flats at very different levels never touch: where cells of two flat regions touch (even at
+ *  a corner) and their levels differ by more than FLAT_STEP, the higher cell should become
+ *  slope. A shared corner takes the lower level, and a cell's ground is only its corners and
+ *  centre, so the whole drop otherwise tilted the higher flat into a ramp (and, at worst, a
+ *  pyramid "fin"). Returns the cells to convert, sorted. */
+export function steppedFlats(cells: Cell[], c: Classified, groups: RegionGroup[], flatLevel: (number | null)[]): number[] {
+  const groupOf = new Int32Array(cells.length).fill(-1);
+  groups.forEach((g, gi) => g.cells.forEach(ci => { groupOf[ci] = gi; }));
+  const out = new Set<number>();
+  cells.forEach((cell, i) => {
+    if (c.kind[i] !== 'flat') return;
+    for (const j of cell.adjacent) {
+      if (c.kind[j] !== 'flat' || groupOf[j] === groupOf[i]) continue;
+      if (flatLevel[i]! > flatLevel[j]! + FLAT_STEP) out.add(i);
+    }
+  });
+  return [...out].sort((a, b) => a - b);
+}

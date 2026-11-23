@@ -362,3 +362,31 @@ describe('ponds never touch (two shared a corner at irregularity 0, seed 5)', ()
     }
   }, 60_000);
 });
+
+describe('flats are flat (flats at different levels never touch)', () => {
+  it('keeps flats away from water nearly level', () => {
+    // A shared corner takes the lower flat's level, so a flat beside a much lower one tilted
+    // right across. Before, 16 % of the area of flats touching no water was steeper than 5°.
+    // (Flats touching water tilt for other reasons: perched ponds, river banks.)
+    let total = 0, steep = 0;
+    const k = (p: number[]) => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`;
+    for (const irregularity of [0, 0.5, 1]) for (const seed of [1, 2, 3, 4]) {
+      const kids = run({ irregularity }, seed).children;
+      const wet = new Set(kids.filter(c => WATER.has(c.kind)).flatMap(c => c.data!.ground!.points.map(k)));
+      for (const f of kids.filter(c => c.kind === 'flat')) {
+        const g = f.data!.ground!;
+        if (g.points.some(p => wet.has(k(p)))) continue;
+        for (const [i, j, l] of g.triangles) {
+          const p = g.points[i], q = g.points[j], r = g.points[l];
+          const ux = q[0] - p[0], uz = q[1] - p[1], uy = q[2] - p[2], vx = r[0] - p[0], vz = r[1] - p[1], vy = r[2] - p[2];
+          const nx = uz * vy - uy * vz, ny = ux * vz - uz * vx, nz = uy * vx - ux * vy;
+          const plan = Math.abs(ny) / 2;
+          total += plan;
+          if (Math.acos(Math.abs(ny) / Math.hypot(nx, ny, nz)) > 5 * Math.PI / 180) steep += plan;
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(0);
+    expect(steep / total).toBeLessThan(0.02);
+  }, 120_000);
+});

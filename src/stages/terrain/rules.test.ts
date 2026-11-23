@@ -3,7 +3,7 @@ import { difference, union } from '../../grammar/clipper.js';
 import { rect } from '../../grammar/polygon.js';
 import { createRng } from '../../pipeline/seeds.js';
 import { buildCells, type Cell } from './cells.js';
-import { classify, mergeRegions, TERRAIN_RULES } from './rules.js';
+import { classify, mergeRegions, steppedFlats, TERRAIN_RULES } from './rules.js';
 
 const site = rect(-1000, -1000, 1000, 1000);
 const sea = rect(-1000, 700, 1000, 1000);
@@ -116,5 +116,25 @@ describe('pond clusters', () => {
     for (const g of pondGroups(2, 0.5).groups) {
       expect(g.cells.reduce((t, ci) => t + cells[ci].area, 0)).toBeLessThanOrEqual(0.5 * 1.5 * 1.5 * 10_000 + 1e-6);
     }
+  });
+});
+
+describe('steppedFlats (flats at different levels never touch)', () => {
+  // Four cells in a row, each touching the next (B and C only at a corner).
+  const row = [[1], [0, 2], [1, 3], [2]].map((adjacent, id) => ({ id, adjacent }) as unknown as Cell);
+  const kind = ['flat', 'flat', 'flat', 'slope'] as const;
+  const classified = { kind: [...kind], flatType: ['shelf', 'shelf', 'river', null] } as Parameters<typeof steppedFlats>[1];
+
+  it('turns the higher cell to slope where two flat regions differ by more than 2 m', () => {
+    const groups = mergeRegions(row.map(c => ({ ...c, neighbours: c.adjacent })), classified);
+    // A and B are one shelf region; C is a river flat 10 m below B.
+    expect(steppedFlats(row, classified, groups, [20, 20, 10, null])).toEqual([1]);
+    expect(steppedFlats(row, classified, groups, [20, 20, 30, null])).toEqual([2]);
+  });
+
+  it('leaves small steps, and steps inside one region, alone', () => {
+    const groups = mergeRegions(row.map(c => ({ ...c, neighbours: c.adjacent })), classified);
+    expect(steppedFlats(row, classified, groups, [20, 20, 18.5, null])).toEqual([]);
+    expect(steppedFlats(row, classified, groups, [30, 20, 19, null])).toEqual([]);
   });
 });
