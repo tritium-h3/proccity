@@ -9,8 +9,10 @@ A **shape grammar** for cities, built in stages (terrain → districts → arter
 lots → lot sections → building parts). Each stage **divides** the regions the previous one
 produced, never adds. The design is `docs/superpowers/specs/2026-11-20-foundation-design.md`.
 Stages so far: **terrain**, now v2 (`docs/superpowers/specs/2026-11-21-terrain-v2-design.md`;
-v1's height-grid design is superseded). Each
-real stage is designed with the owner one at a time; districts come next.
+v1's height-grid design is superseded), and **districts**
+(`docs/superpowers/specs/2026-11-23-districts-design.md`; the owner's zoning notes are in
+`docs/notes/zoningBlocks.md`). Each real stage is designed with the owner one at a time;
+arterial roads come next.
 
 ## Architecture (`src/`)
 
@@ -85,6 +87,22 @@ real stage is designed with the owner one at a time; districts come next.
   surfaces), so later stages get the budget.** Check new terrain detail against it.
 
   **Fine detail is cosmetic, in the renderer's shader. Never add it to the geometry.**
+- **`stages/districts/`:** each terrain land region is cut into districts (hills stay whole,
+  water gets none), and each district gets a type, which later limits its blocks' zones.
+  There's no height cap; height is per block.
+  - `rules.ts`: the eight types, the owner's **neighbour table** (the source of truth),
+    terrain rules (hills Undeveloped; slopes at most Town core) and Growth budgets.
+  - `cut.ts`: seeded, Lloyd-relaxed Voronoi, cut sequentially so the pieces tile the region.
+  - `graph.ts`: touching districts (≥ 3 m shared) and travel costs (slopes ×2, hills ×4,
+    water ×5 within 1.5 river widths).
+  - `fill.ts`: the puzzle fill. Anchors go first: the main centre (type set by Growth), minor
+    Town cores, Rural anchors far from every centre, the user's pins, and hills. Then the rest
+    fills nearest first: the table, terrain and budgets limit the choice, and it's weighted by
+    expected density (falling 200 + 500·Growth m per rank). **A narrow Undeveloped patch
+    doesn't hide a jump**; only hills or wide patches (over ~100 m) separate districts. If
+    nothing fits there's a budget overflow or a repair, both counted in the site's stats.
+  - Partition tests allow 1 mm per metre of district outline, since Clipper's millimetre
+    rounding where cuts cross long region edges exceeds the default 1e-6.
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
   so regenerating stage k never disturbs earlier stages and undo is exact.
@@ -116,7 +134,10 @@ real stage is designed with the owner one at a time; districts come next.
   never while orbiting. The pixel ratio is capped at 1.5. Stage renderers live in
   `scene/renderers/`, **not on the stage**,
   so the worker never bundles Three.js. The current stage's regions cover the site
-  completely, so the site ground isn't drawn under them; drawing both z-fights.
+  completely, so the site ground isn't drawn under them; drawing both z-fights. The districts
+  renderer reuses the terrain renderer (`buildTerrain` with a tint) and colours it from a
+  texture baked from the district footprints (`scene/rasterise.ts`), so **districts add no
+  triangles**.
 - `server.ts`: **the only listener.** Express serves the built frontend from `dist/`
   (`server/web.ts`: dotfiles ignored, nothing outside `dist/`, a 503 "Building…" page while
   `index.html` is missing) plus the placeholder `/api/health`, over HTTPS (`server/tls.ts`;

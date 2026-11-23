@@ -10,7 +10,7 @@
 
 import * as THREE from 'three/webgpu';
 import {
-  attribute, bumpMap, float, max, mix, mx_noise_float, positionLocal, positionWorld, pow, texture, time, vec3, vec4,
+  attribute, bumpMap, float, max, mix, mx_noise_float, positionLocal, positionWorld, pow, texture, time, vec2, vec3, vec4,
 } from 'three/tsl';
 import type { Point2, RegionNode } from '../../doc/types.js';
 import { containsPoint } from '../../grammar/polygon.js';
@@ -18,7 +18,7 @@ import { riverSurfaceAt } from '../../stages/terrain/elevation.js';
 import { flatSurface } from '../../stages/terrain/ground.js';
 import { noiseTile } from '../noiseTile.js';
 import { faceNormals, phongSubdivide, smoothNormals } from '../smoothMesh.js';
-import type { PickableMesh, StageRenderer } from './index.js';
+import type { PickableMesh, Rendered, StageRenderer } from './index.js';
 
 // The 2 m cosmetic budget, split between curving the surface and noise displacement.
 const CURVE_MAX = 1.25;
@@ -60,7 +60,10 @@ function noiseTexture(): THREE.DataTexture {
   return tile;
 }
 
-function groundMaterial(): THREE.MeshStandardNodeMaterial {
+/** A colour baked over the site (e.g. district types): rgb replaces the ground colour by alpha. */
+export interface GroundTint { texture: THREE.DataTexture; minX: number; minZ: number; size: number }
+
+function groundMaterial(tint?: GroundTint): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.95, metalness: 0 });
   const xz = positionWorld.xz;
   // Four independent noises (about -1..1) at `freq` features per metre; `offset` shifts the
@@ -79,6 +82,10 @@ function groundMaterial(): THREE.MeshStandardNodeMaterial {
   colour = colour.mul(float(1).add(misc.x.mul(0.08)));                         // colour variation
   const wet = float(1).sub(positionWorld.y.add(misc.y.mul(0.8)).sub(0.6).div(0.9).clamp(0, 1)); // wet sand below ~1.5 m
   colour = mix(colour, vec3(SAND.r, SAND.g, SAND.b), wet.mul(float(1).sub(s.w.div(total))));
+  if (tint) {
+    const t = texture(tint.texture, xz.sub(vec2(tint.minX, tint.minZ)).div(tint.size));
+    colour = mix(colour, t.rgb, t.a);
+  }
   m.colorNode = colour;
 
   // Micro-relief: bump from fine noise, and a little real displacement (≤ ±NOISE_MAX).
@@ -99,7 +106,10 @@ function waterMaterial(hex: number): THREE.MeshStandardNodeMaterial {
   return m;
 }
 
-export const renderTerrain: StageRenderer = nodes => {
+export const renderTerrain: StageRenderer = nodes => buildTerrain(nodes, {});
+
+/** The terrain's ground and water, optionally tinted (later stages reuse it as their base). */
+export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): Rendered {
   const t0 = performance.now();
   const group = new THREE.Group();
   // Old v1 cities have no ground data: draw their regions flat at 0 so they still show.
@@ -147,7 +157,7 @@ export const renderTerrain: StageRenderer = nodes => {
   geo.setAttribute('weights', new THREE.Float32BufferAttribute(sub.weights, 4));
   geo.setAttribute('normal', new THREE.BufferAttribute(n1, 3));
   geo.setIndex(sub.tris);
-  const ground = new THREE.Mesh(geo, groundMaterial());
+  const ground = new THREE.Mesh(geo, groundMaterial(opts.tint));
   ground.castShadow = true;
   ground.receiveShadow = true;
   group.add(ground);
@@ -186,4 +196,4 @@ export const renderTerrain: StageRenderer = nodes => {
 
   if (import.meta.env?.DEV) console.info(`[proccity] terrain mesh: ${sub.tris.length / 3} triangles (${tris.length / 3} stored), built in ${(performance.now() - t0).toFixed(1)} ms`);
   return { object: group, pickables };
-};
+}

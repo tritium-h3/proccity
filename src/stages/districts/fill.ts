@@ -33,7 +33,9 @@ export interface FillInput {
 }
 export interface FillResult { types: DistrictType[]; anchor: (AnchorRole | null)[]; repairs: number; overflows: number }
 
-const STEP = 250;          // m of travel per rank of falling density
+// m of travel per rank of falling density: growth spreads the city (budgets still cap it).
+// A fixed 250 m gave a one-district core with a thin ring around it at any growth.
+const stepFor = (growth: number) => 200 + 500 * growth;
 // Denser than expected is penalised more steeply than sparser, so chains of legal steps
 // (Town core → Low urban → Urban) don't drift density upward far from any centre.
 const SIGMA_UP = 0.6, SIGMA_DOWN = 1.2;
@@ -161,11 +163,12 @@ export function assignTypes(inp: FillInput): FillResult {
   }
 
   // Expected rank from travel to each centre (falling with distance), held down near Rural anchors.
+  const step = stepFor(inp.growth);
   const fromCentre = centres.map(c => ({ rank: RANK[types[c]!], d: travelFrom(g, [c]) }));
   const nearRural = rural.length ? travelFrom(g, rural) : Array<number>(n).fill(Infinity);
   const expected = (i: number) => {
     let e = 1;
-    for (const c of fromCentre) e = Math.max(e, c.rank - c.d[i] / STEP);
+    for (const c of fromCentre) e = Math.max(e, c.rank - c.d[i] / step);
     return nearRural[i] <= RURAL_REACH ? Math.min(e, 2) : e;
   };
 
@@ -186,7 +189,7 @@ export function assignTypes(inp: FillInput): FillResult {
     }
     // Dense types taper as their budget runs low, so the core's edge steps down on its own.
     const left = (t: DistrictType) => (cap[t] === Infinity ? 1 : Math.max(0, 1 - used[t] / (cap[t] * total || 1)));
-    const weights = cands.map(t => (t === 'undeveloped' ? UNDEVELOPED_WEIGHT : Math.exp(-((RANK[t] - e) ** 2) / (2 * (RANK[t] > e ? SIGMA_UP : SIGMA_DOWN) ** 2)) * Math.sqrt(left(t)) + 1e-9));
+    const weights = cands.map(t => (t === 'undeveloped' ? UNDEVELOPED_WEIGHT : Math.exp(-((RANK[t] - e) ** 2) / (2 * (RANK[t] > e ? SIGMA_UP : SIGMA_DOWN) ** 2)) * (left(t) ** 2) + 1e-9));
     const sum = weights.reduce((a, b) => a + b, 0);
     if (!cands.length || sum <= 0) { place(i, 'undeveloped'); continue; }
     let r = rng() * sum, k = 0;
