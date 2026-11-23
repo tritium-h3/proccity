@@ -17,7 +17,6 @@ export interface GeneratorClient {
 }
 
 export function createGeneratorClient(): GeneratorClient {
-  const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   const gate = createLatestGate();
   const pending = new Map<number, { resolve: (o: GenerateOutcome) => void; onProgress?: (i: number) => void }>();
 
@@ -26,7 +25,16 @@ export function createGeneratorClient(): GeneratorClient {
     pending.delete(ticket);
   };
 
-  worker.onmessage = (e: MessageEvent<WorkerReply>) => {
+  // A worker only checks for newer requests between stages, so a stale run inside one long
+  // stage (arterials on a big site can take tens of seconds) kept running and queued every
+  // later request behind it. A run still in flight is now killed and the worker replaced.
+  let worker: Worker;
+  const start = () => {
+    worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = onMessage;
+    worker.onerror = onError;
+  };
+  const onMessage = (e: MessageEvent<WorkerReply>) => {
     const msg = e.data;
     if (!gate.isLatest(msg.ticket)) return settle(msg.ticket, { status: 'superseded' });
     switch (msg.type) {
@@ -36,13 +44,15 @@ export function createGeneratorClient(): GeneratorClient {
       case 'abandoned': settle(msg.ticket, { status: 'superseded' }); break;
     }
   };
-  worker.onerror = e => {
+  const onError = (e: ErrorEvent) => {
     for (const ticket of pending.keys()) settle(ticket, { status: 'error', message: e.message || 'generation worker crashed' });
   };
+  start();
 
   return {
     run(doc, fromStage, onProgress) {
       const ticket = gate.next();
+      if (pending.size) { worker.terminate(); start(); }
       for (const older of [...pending.keys()]) settle(older, { status: 'superseded' });
       return new Promise(resolve => {
         pending.set(ticket, { resolve, onProgress });
