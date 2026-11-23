@@ -112,13 +112,16 @@ export const arterials: Stage = {
     };
 
     // 2. Hubs: the town centres, then spaced points on usable, not-too-steep ground.
+    // Sampled hubs only on developed land: Undeveloped districts needn't be reached (the
+    // owner), and hubs there drew roads through the wilds. Roads still cross it when it's the way.
+    const wild = dists.filter(d => d.attrs.type === 'undeveloped').map(d => d.geometry.footprint);
     // Hubs keep away from the site edge, or links between them ran along it.
     const margin = (s.spacing * 3) / 14; // 150 m at the old 700 m spacing
     const edgeDist = (p: Point2) => Math.min(p[0] - sb.minX, sb.maxX - p[0], p[1] - sb.minZ, sb.maxZ - p[1]);
     // Town centres too keep inside the edge margin (one on the edge sent roads along it).
     const inset = (p: Point2): Point2 => [Math.min(sb.maxX - margin, Math.max(sb.minX + margin, p[0])), Math.min(sb.maxZ - margin, Math.max(sb.minZ + margin, p[1]))];
     const fixed = dists.filter(d => d.attrs.anchor === 'main' || d.attrs.anchor === 'minor').map(d => nudge(inset(centroid(d.geometry.footprint))));
-        const hubs = poissonHubs(fixed, s.spacing, p => { const c = cellOf(g, p[0], p[1]); return containsPoint(tree.geometry.footprint, p) && edgeDist(p) >= margin && usable(c) && gradeAt(c) <= params.maxGrade; }, { minX: sb.minX, minZ: sb.minZ, size }, rng);
+        const hubs = poissonHubs(fixed, s.spacing, p => { const c = cellOf(g, p[0], p[1]); return containsPoint(tree.geometry.footprint, p) && edgeDist(p) >= margin && usable(c) && gradeAt(c) <= params.maxGrade && !wild.some(w => containsPoint(w, p)); }, { minX: sb.minX, minZ: sb.minZ, size }, rng);
 
     // 3. The mesh, with link costs estimated along the straight line.
     const estimate = (a: Point2, b: Point2) => {
