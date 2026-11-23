@@ -10,7 +10,11 @@ export function rasterise(polys: { footprint: MultiPolygon; rgba: [number, numbe
   const cell = size / px;
   for (const { footprint, rgba } of polys) {
     const rings = footprint.flat();
-    for (let row = 0; row < px; row++) {
+    // Only the rows the footprint spans.
+    let zMin = Infinity, zMax = -Infinity;
+    for (const ring of rings) for (const p of ring) { zMin = Math.min(zMin, p[1]); zMax = Math.max(zMax, p[1]); }
+    const r0 = Math.max(0, Math.floor((zMin - minZ) / cell - 0.5)), r1 = Math.min(px - 1, Math.ceil((zMax - minZ) / cell));
+    for (let row = r0; row <= r1; row++) {
       const z = minZ + (row + 0.5) * cell;
       const xs: number[] = [];
       for (const ring of rings) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {

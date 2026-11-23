@@ -11,8 +11,10 @@ produced, never adds. The design is `docs/superpowers/specs/2026-11-20-foundatio
 Stages so far: **terrain**, now v2 (`docs/superpowers/specs/2026-11-21-terrain-v2-design.md`;
 v1's height-grid design is superseded), and **districts**
 (`docs/superpowers/specs/2026-11-23-districts-design.md`; the owner's zoning notes are in
-`docs/notes/zoningBlocks.md`). Each real stage is designed with the owner one at a time;
-arterial roads come next.
+`docs/notes/zoningBlocks.md`), and **arterials**
+(`docs/superpowers/specs/2026-11-23-arterials-design.md`). Each real stage is designed with the
+owner one at a time. Local roads come next; whether collectors sit between arterials and local
+roads is pinned for that design.
 
 ## Architecture (`src/`)
 
@@ -106,6 +108,25 @@ arterial roads come next.
     reroll the map.
   - Partition tests allow 1 mm per metre of district outline, since Clipper's millimetre
     rounding where cuts cross long region edges exceeds the default 1e-6.
+- **`stages/arterials/`:** a sparse network that links (every district reachable, a few loops)
+  and divides (superblocks). Density does **not** add roads.
+  - `grid.ts`: a 20 m cost raster. Grade along the heading costs steeply past **Max grade**,
+    but it's soft, never infinite. District borders are cheap corridors (×0.75), with a
+    penalty for running parallel just beside them. Sea and ponds are blocked. The river costs
+    ×30, more when not crossing square. Placed roads repel parallel neighbours.
+  - `route.ts`: A\* with heading in the state (16 directions, at most ±45° per step, a turn
+    cost).
+  - `hubs.ts`, `mesh.ts`: Poisson hubs at the spacing (town centres first) and exits (dead
+    ends on land edges). A Delaunay mesh is reduced to a spanning tree plus the Redundancy
+    share of loops, refusing junctions sharper than the Junction angle.
+  - `smooth.ts`: simplify, then true circular arcs of the Curve radius (capped where segments
+    are short; counted).
+  - `space.ts`: slivers (narrower than the Usable width, or tinier than its square). A loop is
+    dropped if that removes a sliver.
+  - `stage.ts`: route links, prune loops, repair connectivity, exits, then spurs to untouched
+    districts. Bands have round ends. Roads are cut out of districts (`arterial` +
+    `superblock`) and the river (`bridge` + `water`). `data.roads` keeps the centrelines; the
+    stats count compromises.
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
   so regenerating stage k never disturbs earlier stages and undo is exact.
@@ -139,8 +160,10 @@ arterial roads come next.
   so the worker never bundles Three.js. The current stage's regions cover the site
   completely, so the site ground isn't drawn under them; drawing both z-fights. The districts
   renderer reuses the terrain renderer (`buildTerrain` with a tint) and colours it from a
-  texture baked from the district footprints (`scene/rasterise.ts`), so **districts add no
-  triangles**.
+  texture baked from the district footprints (`scene/rasterise.ts`, shared via
+  `renderers/tint.ts`), so **districts add no triangles**. Arterials do the same, at 2048 px,
+  with superblocks in their district's colour and roads as asphalt. Only bridge decks are
+  geometry.
 - `server.ts`: **the only listener.** Express serves the built frontend from `dist/`
   (`server/web.ts`: dotfiles ignored, nothing outside `dist/`, a 503 "Building…" page while
   `index.html` is missing) plus the placeholder `/api/health`, over HTTPS (`server/tls.ts`;
