@@ -75,6 +75,7 @@ road across every district border. "Connected" means reachable.
 
 | Junction angle | 30–90°, step 5 | 60 | The sharpest angle at which two arterials may meet. |
 | Curve radius | 20–200 m, step 10 | 60 | The tightest bend an arterial may take. |
+| Max grade | 2–20%, step 1 | 8 | The steepest grade an arterial should take. It's soft: cost rises steeply past it, but it's exceeded where there's no other way. |
 | Usable width | 30–150 m, step 10 | 60 | The narrowest land left between roads, or between a road and a district edge (about a quarter of a district's width at the default). |
 
 These three were constants in the first draft. The owner asked for them to be tunable, since
@@ -86,10 +87,13 @@ part of the sliver test, stay internal.
 
 A raster over the site at about 10 m per cell, built from the terrain. Each cell's cost is:
 
-- **Gradient:** grows steeply with grade. A cell's grade is measured on the terrain's ground
-  (`groundHeightAt` over the terrain regions). Flat costs 1. A 10% grade costs several times
-  that, and above about 15% the cost is prohibitive. This makes roads traverse slopes along
-  the contours, with gentle switchbacks where they must climb.
+- **Gradient:** grows with grade, and steeply past **Max grade**. Measure a cell's grade along
+  the route's heading, not as the steepest slope, so a road traversing a slope along the
+  contours pays little. Use the terrain's ground (`groundHeightAt` over the terrain regions).
+  Flat costs 1. Below Max grade, cost rises gently. Above it, cost grows fast, for example with
+  the square of the excess, so it's avoided wherever any reasonable detour exists, but it's
+  never a hard wall: a place reachable only up a steep slope still gets its road. This makes
+  roads follow the contours, with gentle switchbacks where they must climb.
 - **Hills:** an extra factor, so roads go round hills where there's a reasonable way round,
   and over them where there isn't.
 - **Water:**
@@ -197,8 +201,8 @@ The stage divides leaves, like every stage:
   - the centreline of every road, as `data.roads`: a new `RegionData` field, a list of
     `{ id, points: Point2[], exit: boolean }`. Later stages branch off it, and the renderer can
     draw from it.
-  - stats: links, loops, exits, bridges, unreachable districts, sharp junctions, tight curves
-    and slivers.
+  - stats: links, loops, exits, bridges, unreachable districts, sharp junctions, tight curves,
+    slivers, and the length of road over Max grade.
 
 ### 8. Rendering
 
@@ -236,6 +240,7 @@ Log the stage time in the stats. A much slower result is a finding, not a pass.
   - curve radii are at or above the minimum, apart from counted exceptions;
   - slivers come only from counted required links;
   - the mean road grade is well below the grade of straight lines between the same hubs;
+  - lowering Max grade lowers the length of road over it (or keeps it at zero);
   - the result is deterministic per seed.
 - Extremes of every setting keep the partition and finish in time.
 - **Visual check:** screenshots on a few seeds, at spacing 400, 700 and 1200 and redundancy 0
