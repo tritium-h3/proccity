@@ -43,5 +43,5 @@ export function tintedTerrain(ctx: RenderContext, polys: { footprint: MultiPolyg
   // Materials don't dispose their textures: without this each rebuild (every slider drag)
   // stranded another texture on the GPU.
   base.object.userData.dispose = () => tex.dispose();
-  return { object: base.object, pickables };
+  return { object: base.object, pickables, ground: base.ground };
 }

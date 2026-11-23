@@ -63,12 +63,13 @@ function noiseTexture(): THREE.DataTexture {
 /** A colour baked over the site (e.g. district types): rgb replaces the ground colour by alpha. */
 export interface GroundTint { texture: THREE.DataTexture; minX: number; minZ: number; size: number }
 
-function groundMaterial(tint?: GroundTint): THREE.MeshStandardNodeMaterial {
+// Cosmetic noise was tuned at 2 km; `scale` = site size / 2000 keeps its features in proportion.
+function groundMaterial(tint: GroundTint | undefined, scale: number): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.95, metalness: 0 });
   const xz = positionWorld.xz;
   // Four independent noises (about -1..1) at `freq` features per metre; `offset` shifts the
   // tile so different uses don't line up.
-  const N = (freq: number, offset: number) => texture(noiseTexture(), xz.mul(freq / TILE_CYCLES).add(offset)).mul(2).sub(1);
+  const N = (freq: number, offset: number) => texture(noiseTexture(), xz.mul(freq / scale / TILE_CYCLES).add(offset)).mul(2).sub(1);
 
   // Ragged region edges: jitter each channel's weight with its own noise, then sharpen, so
   // the boundary between two kinds wanders instead of following the polygon edge.
@@ -91,7 +92,7 @@ function groundMaterial(tint?: GroundTint): THREE.MeshStandardNodeMaterial {
   // Micro-relief: bump from fine noise, and a little real displacement (≤ ±NOISE_MAX).
   // The bump stays procedural (one octave, so one noise per pixel): a bump read from the tile
   // showed a regular cross-hatch grain, since bilinear texture slopes come out faceted.
-  m.normalNode = bumpMap(mx_noise_float(vec3(xz.x.mul(0.25).add(3), float(3), xz.y.mul(0.25))), float(0.5));
+  m.normalNode = bumpMap(mx_noise_float(vec3(xz.x.mul(0.25 / scale).add(3), float(3), xz.y.mul(0.25 / scale))), float(0.5));
   // No displacement where land meets water (the bed weight is above 0 exactly on vertices
   // shared with a water region): ±1.5 m exceeded the 0.5 m bank freeboard and sank banks.
   const dry = float(1).sub(w.w.mul(20).clamp(0, 1));
@@ -99,10 +100,10 @@ function groundMaterial(tint?: GroundTint): THREE.MeshStandardNodeMaterial {
   return m;
 }
 
-function waterMaterial(hex: number): THREE.MeshStandardNodeMaterial {
+function waterMaterial(hex: number, scale: number): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({ color: hex, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0 });
   const xz = positionWorld.xz;
-  m.normalNode = bumpMap(mx_noise_float(vec3(xz.x.mul(0.05).add(time.mul(0.3)), time.mul(0.1), xz.y.mul(0.05))), float(0.25));
+  m.normalNode = bumpMap(mx_noise_float(vec3(xz.x.mul(0.05 / scale).add(time.mul(0.3)), time.mul(0.1), xz.y.mul(0.05 / scale))), float(0.25));
   return m;
 }
 
@@ -116,6 +117,11 @@ export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): 
   const groundOf = new Map(nodes.map(n => [n, n.data?.ground ?? flatSurface(n.geometry.footprint)]));
   const withGround = nodes;
   if (!withGround.length) return { object: group, pickables: [] };
+  let extent = 0;
+  for (const n of withGround) for (const p of n.geometry.footprint.flat(2)) extent = Math.max(extent, Math.abs(p[0]), Math.abs(p[1]));
+  const scale = Math.max(0.25, (2 * extent) / 2000);
+  // The curve's lift scales with how much steeper the ground got: relief grew about 4× when the
+  // site grew 15×, so with the square root of the scale.
 
   // Ground: every region's triangles in one mesh, vertices shared by key so normals and the
   // colour blend run smoothly across region boundaries.
@@ -150,14 +156,14 @@ export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): 
 
   // Smooth shading: soften normals, curve the surface by one subdivision (Phong), soften again.
   const n0 = smoothNormals(pos, tris, faceNormals(pos, tris), 2);
-  const sub = phongSubdivide(pos, weights, tris, n0, { maxDy: CURVE_MAX, minDy: CURVE_MIN });
+  const sub = phongSubdivide(pos, weights, tris, n0, { maxDy: CURVE_MAX * Math.sqrt(scale), minDy: CURVE_MIN * Math.sqrt(scale) });
   const n1 = smoothNormals(sub.pos, sub.tris, faceNormals(sub.pos, sub.tris), 2);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(sub.pos, 3));
   geo.setAttribute('weights', new THREE.Float32BufferAttribute(sub.weights, 4));
   geo.setAttribute('normal', new THREE.BufferAttribute(n1, 3));
   geo.setIndex(sub.tris);
-  const ground = new THREE.Mesh(geo, groundMaterial(opts.tint));
+  const ground = new THREE.Mesh(geo, groundMaterial(opts.tint, scale));
   ground.castShadow = true;
   ground.receiveShadow = true;
   group.add(ground);
@@ -182,7 +188,7 @@ export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): 
     const wg = new THREE.BufferGeometry();
     wg.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3));
     wg.computeVertexNormals();
-    const mesh = new THREE.Mesh(wg, waterMaterial(WATER_COLOUR[n.kind]));
+    const mesh = new THREE.Mesh(wg, waterMaterial(WATER_COLOUR[n.kind], scale));
     mesh.receiveShadow = true;
     mesh.renderOrder = 1;
     waterMeshes.push(mesh);
@@ -195,5 +201,5 @@ export function buildTerrain(nodes: RegionNode[], opts: { tint?: GroundTint }): 
   const pickables: PickableMesh[] = [...waterMeshes, ground].map(mesh => ({ mesh, nodeIdAt }));
 
   if (import.meta.env?.DEV) console.info(`[proccity] terrain mesh: ${sub.tris.length / 3} triangles (${tris.length / 3} stored), built in ${(performance.now() - t0).toFixed(1)} ms`);
-  return { object: group, pickables };
+  return { object: group, pickables, ground: { pos: sub.pos, tris: sub.tris } };
 }

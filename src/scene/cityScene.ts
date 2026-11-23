@@ -81,8 +81,17 @@ export function createCityScene(container: HTMLElement): CityScene {
     sun.position.set(-half * 0.9, half * 0.9, half * 1.0);
     const cam = sun.shadow.camera;
     cam.left = -half * 1.2; cam.right = half * 1.2; cam.top = half * 1.2; cam.bottom = -half * 1.2;
-    cam.near = 1; cam.far = half * 5;
+    // The sun sits ~1.6 half-sizes from the centre: a tight depth range keeps shadow precision
+    // (1 m to 5 half-sizes was fine at 2 km, and acne over flat water at 30 km).
+    cam.near = half * 0.3; cam.far = half * 3.2;
     cam.updateProjectionMatrix();
+    // Shadow texels grow with the site (about 9 m at 30 km), and so must the bias.
+    sun.shadow.normalBias = size / 3000;
+    // Depth range and zoom limits follow the site (they were fixed for 2 km).
+    camera.near = Math.max(1, size / 3000);
+    camera.far = size * 6;
+    camera.updateProjectionMatrix();
+    controls.maxDistance = size * 4.5;
     (scene.fog as THREE.Fog).near = size * 1.25;
     (scene.fog as THREE.Fog).far = size * 3.5;
     // Frame the whole site from the default three-quarter view.
@@ -99,6 +108,7 @@ export function createCityScene(container: HTMLElement): CityScene {
     const b = v.tree.geometry.footprint[0]?.[0];
     if (b) fitToSite(Math.max(...b.map(p => Math.abs(p[0]))) * 2, groundHeightAt(v.tree, 0, 0));
     clearOutline(selection);
+    clearOutline(hover); hover = null; hoverId = null;
     selection = v.selectedId ? outline(v.tree, v.selectedId, SELECT, 1) : null;
     if (selection) scene.add(selection);
   }
@@ -126,13 +136,16 @@ export function createCityScene(container: HTMLElement): CityScene {
   }
 
   const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
+  let hoverId: string | null = null;
   const onUp = (e: PointerEvent) => {
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) { down = null; return; }
     down = null;
     pickFn?.(hitAt(e));
   };
   let hoverQueued: PointerEvent | null = null;
-  const onMove = (e: PointerEvent) => { hoverQueued = e; };
+  // No hover while a button is held (orbiting): a raycast and an outline every frame of a drag
+  // made orbiting crawl at 30 km.
+  const onMove = (e: PointerEvent) => { if (e.buttons === 0) hoverQueued = e; };
   renderer.domElement.addEventListener('pointerdown', onDown);
   renderer.domElement.addEventListener('pointerup', onUp);
   renderer.domElement.addEventListener('pointermove', onMove);
@@ -142,8 +155,11 @@ export function createCityScene(container: HTMLElement): CityScene {
     const e = hoverQueued;
     hoverQueued = null;
     const hit = hitAt(e);
+    const id = hit && hit.nodeId !== view.selectedId ? hit.nodeId : null;
+    if (id === hoverId) return; // same region: keep its outline
+    hoverId = id;
     clearOutline(hover);
-    hover = hit && hit.nodeId !== view.selectedId ? outline(view.tree, hit.nodeId, SELECT, 0.4) : null;
+    hover = id ? outline(view.tree, id, SELECT, 0.4) : null;
     if (hover) scene.add(hover);
   }
 

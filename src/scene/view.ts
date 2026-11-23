@@ -80,7 +80,10 @@ export function outline(tree: RegionNode, id: string, colour: number, opacity: n
   const group = new THREE.Group();
   for (const [outer] of node.geometry.footprint) {
     if (!outer) continue;
-    const ring = high === null ? densify(outer, 8) : outer;
+    // Drape points every site/250 (8 m at 2 km): a fixed 8 m meant thousands of height lookups
+    // per outline at 30 km, and the hover outline was rebuilt every frame while orbiting.
+    const siteSpan = Math.max(...tree.geometry.footprint[0][0].map(p => Math.abs(p[0]))) * 2;
+    const ring = high === null ? densify(outer, Math.max(8, siteSpan / 250)) : outer;
     // A closed Line, not LineLoop: WebGPURenderer doesn't support LineLoop.
     // Over water the ground is the bed; draw on the water surface instead, or it's hidden.
     const water = waterSurfaceAt(node);

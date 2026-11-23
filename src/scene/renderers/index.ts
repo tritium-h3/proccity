@@ -16,7 +16,11 @@ export interface PickableMesh {
   /** point-based lookup (terrain: the region containing the ground point) */
   nodeIdAt?(point: Point2): string | null;
 }
-export interface Rendered { object: THREE.Object3D; pickables: PickableMesh[] }
+export interface Rendered {
+  object: THREE.Object3D; pickables: PickableMesh[];
+  /** the terrain as drawn (x, y, z positions and triangle indices), for draping things on it */
+  ground?: { pos: ArrayLike<number>; tris: ArrayLike<number> };
+}
 export type StageRenderer = (nodes: RegionNode[], ctx: RenderContext) => Rendered;
 
 export const RENDERERS: Record<string, StageRenderer> = {
