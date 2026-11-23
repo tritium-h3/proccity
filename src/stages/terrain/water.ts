@@ -8,7 +8,7 @@ import { createNoise2D } from 'simplex-noise';
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
 import { chaikin } from '../../grammar/contour.js';
 import { difference, intersect, offsetPolygons, offsetPolyline, union } from '../../grammar/clipper.js';
-import { area, containsPoint, rect } from '../../grammar/polygon.js';
+import { area, containsPoint, rect, simplifyLine } from '../../grammar/polygon.js';
 
 export type Shore = 'none' | 'north' | 'east' | 'south' | 'west';
 
@@ -103,7 +103,10 @@ export function layoutWater(i: WaterInput): Water {
     const course = chaikin(midpointDisplace(src, mouth, 5, 0.35 * MEANDER, rng, onLand), 3);
     // Extend past both ends so the band reaches the site edge and runs into the sea.
     const banded = [extend(course[0], course[1], i.riverWidth), ...course, extend(course[course.length - 1], course[course.length - 2], i.riverWidth)];
-    let polygon = intersect(offsetPolyline(banded, i.riverWidth / 2), site);
+    // The polygon comes from a copy of the course simplified to within 0.5 m: the smoothed
+    // course has hundreds of points, and every one became two outline points (and land
+    // cell corners, and triangles). The full course stays as data for the water surface.
+    let polygon = intersect(offsetPolyline(simplifyLine(banded, 0.5), i.riverWidth / 2), site);
     if (sea) polygon = difference(polygon, sea);
     // One river: keep the main piece; stray bits (a mouth extension poking through a coastal
     // bulge, a bend clipped by the sea) are left to the land.

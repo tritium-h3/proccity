@@ -62,3 +62,26 @@ export function bounds(mp: MultiPolygon): { minX: number; minZ: number; maxX: nu
 export function rect(minX: number, minZ: number, maxX: number, maxZ: number): MultiPolygon {
   return [[[[minX, minZ], [maxX, minZ], [maxX, maxZ], [minX, maxZ]]]];
 }
+
+/** Douglas–Peucker: the fewest points of `line` (ends kept) such that every dropped point
+ *  lies within `tolerance` metres of the simplified line. */
+export function simplifyLine(line: Point2[], tolerance: number): Point2[] {
+  if (line.length <= 2) return line.slice();
+  const keep = new Uint8Array(line.length);
+  keep[0] = keep[line.length - 1] = 1;
+  const stack: [number, number][] = [[0, line.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop()!;
+    const [ax, az] = line[i], [bx, bz] = line[j];
+    const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
+    let worst = -1, wd = tolerance;
+    for (let k = i + 1; k < j; k++) {
+      const [px, pz] = line[k];
+      const t = L2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / L2)) : 0;
+      const d = Math.hypot(ax + dx * t - px, az + dz * t - pz);
+      if (d > wd) { wd = d; worst = k; }
+    }
+    if (worst >= 0) { keep[worst] = 1; stack.push([i, worst], [worst, j]); }
+  }
+  return line.filter((_, k) => keep[k]);
+}

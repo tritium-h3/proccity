@@ -12,6 +12,7 @@ import type { Stage } from '../types.js';
 import type { RegionGroup } from './rules.js';
 import { buildCells, vkey } from './cells.js';
 import { computeLevels, riverSurfaceAt } from './elevation.js';
+import { decimate } from './decimate.js';
 import { constrainedSurface } from './ground.js';
 import { classify, mergeRegions, steppedFlats } from './rules.js';
 import { roundPonds } from './ponds.js';
@@ -20,6 +21,11 @@ import { layoutWater, riverProfile, type Shore } from './water.js';
 const SEA_DEPTH = 15;
 const RIVER_DEPTH = 3;
 const POND_DEPTH = 2;
+// Simplification tolerances (m): every region's surface is decimated after it's built.
+// Boundary vertices are never removed, so regions still meet exactly. Beds are hidden under
+// the water, so they may be coarser.
+const LAND_TOLERANCE = 0.25;
+const BED_TOLERANCE = 0.5;
 
 /** Bed points on a grid inside a water footprint. Without them the triangulation can span a
  *  pond or river from bank to bank using only bank-height points, leaving a ridge above
@@ -229,18 +235,25 @@ export const terrain: Stage = {
     if (water.river && course && profile && area(water.river.polygon) > 0) {
       const surf = (p: Point2) => riverSurfaceAt(course, profile, p);
       const bedAt = (p: Point2) => surf(p) - RIVER_DEPTH;
+      let lastBed = 0;
       const bed: [number, number, number][] = [
-        ...course.map((p, i): [number, number, number] => [p[0], p[1], profile[i] - RIVER_DEPTH]),
+        // Course points about every 25 m (the grid's spacing); every one (~8 m apart) only
+        // added triangles under the water.
+        ...course.flatMap((p, i): [number, number, number][] => {
+          if (i > 0 && i < course.length - 1 && Math.hypot(p[0] - course[lastBed][0], p[1] - course[lastBed][1]) < 25) return [];
+          lastBed = i;
+          return [[p[0], p[1], profile[i] - RIVER_DEPTH]];
+        }),
         ...bedPoints(water.river.polygon, 25, bedAt),
       ];
       // Edge points that aren't land corners border water (the sea at the mouth): bed, not bank.
-      const ground = constrainedSurface(water.river.polygon, p => {
+      const ground = decimate(constrainedSurface(water.river.polygon, p => {
         const v = vertexElevation(p);
         if (v !== undefined) return v;
         const e = bedAt(p);
         riverEdge.set(vkey(p), e);
         return e;
-      }, bed);
+      }, bed), BED_TOLERANCE);
       riverNode = node('river', 'river', water.river.polygon,
         { water: 'fresh', flow: 'flowing', width: s.riverWidth, sourceSurface: profile[0], mouthSurface: profile[profile.length - 1] },
         { ground, course, profile });
@@ -261,8 +274,8 @@ export const terrain: Stage = {
         }
       }
       const bed = (p: Point2) => Math.min(-2, depth(p));
-      const ground = constrainedSurface(water.sea, p => vertexElevation(p) ?? riverEdge.get(vkey(p)) ?? depth(p),
-        [...shelf, ...bedPoints(water.sea, 90, bed)]);
+      const ground = decimate(constrainedSurface(water.sea, p => vertexElevation(p) ?? riverEdge.get(vkey(p)) ?? depth(p),
+        [...shelf, ...bedPoints(water.sea, 90, bed)]), BED_TOLERANCE);
       out.push(node('sea', 'sea', water.sea, { water: 'salt', flow: 'still', surface: 0 }, { ground }));
     }
     if (riverNode) out.push(riverNode);
@@ -275,7 +288,12 @@ export const terrain: Stage = {
       for (const ci of g.cells) {
         // A thin cell's centre can sit a metre from its own corners at a different height (a
         // micro-cliff); such cells just interpolate from their corners.
-        if (distanceToPolygon(cells[ci].poly, cells[ci].seed) === 0 && ringDistance(cells[ci].poly, cells[ci].seed) >= 3) {
+        // A centre adds nothing where the corners already define the surface: a flat cell whose
+        // corners all sit at its level, or a pond cell (its bed comes from the ring below).
+        const level = levels.centre[ci];
+        const redundant = g.kind === 'pond'
+          || (g.kind === 'flat' && cells[ci].poly[0].every(p => Math.abs((vertexElevation(p) ?? NaN) - level) < 1e-6));
+        if (!redundant && distanceToPolygon(cells[ci].poly, cells[ci].seed) === 0 && ringDistance(cells[ci].poly, cells[ci].seed) >= 3) {
           interior.push([cells[ci].seed[0], cells[ci].seed[1], levels.centre[ci]]);
         }
         for (const ring of cells[ci].poly) for (const p of ring) interior.push([p[0], p[1], vertexElevation(p) ?? levels.centre[ci]]);
@@ -288,9 +306,12 @@ export const terrain: Stage = {
       };
       if (g.kind === 'pond') {
         const surface = levels.pondSurface[g.cells[0]]!;
-        interior.push(...bedPoints(fp, 25, () => surface - POND_DEPTH), ...insetBedPoints(fp, 4, 8, surface - POND_DEPTH));
+        // A ring of bed points just inside the shore is enough: no triangle can join bank
+        // points across the pond past it, and the bed inside is flat (a grid only added
+        // triangles under the water).
+        interior.push(...insetBedPoints(fp, 4, 16, surface - POND_DEPTH));
       }
-      const ground = constrainedSurface(fp, p => vertexElevation(p) ?? fallback(p), interior);
+      const ground = decimate(constrainedSurface(fp, p => vertexElevation(p) ?? fallback(p), interior), g.kind === 'pond' ? BED_TOLERANCE : LAND_TOLERANCE);
       const name = `${g.kind}:${counters[g.kind]++}`;
       if (g.kind === 'pond') {
         out.push(node(name, 'pond', fp, { water: 'fresh', flow: 'still', surface: r1(levels.pondSurface[g.cells[0]]!) }, { ground }));
