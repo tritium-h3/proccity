@@ -6,20 +6,27 @@
 
 import { Delaunay } from 'd3-delaunay';
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
-import { intersect, offsetPolygons, union } from '../../grammar/clipper.js';
+import { difference, intersect, offsetPolygons, union } from '../../grammar/clipper.js';
 import { area, bounds, centroid, containsPoint } from '../../grammar/polygon.js';
 
 const LLOYD = 2;
 const CANDIDATES = 200;
 
+/** The seeds' Voronoi cells within the region. Cut one at a time from what's left, and the last
+ *  piece is the remainder: clipping each cell separately left gaps of a tenth of a square metre
+ *  where the rounded cuts didn't quite meet. */
 function voronoiPieces(fp: MultiPolygon, seeds: Point2[]): MultiPolygon[] {
   const b = bounds(fp);
   const v = Delaunay.from(seeds).voronoi([b.minX - 1, b.minZ - 1, b.maxX + 1, b.maxZ + 1]);
+  let rest = fp;
   return seeds.map((_, i) => {
+    if (i === seeds.length - 1) return rest;
     const cell = v.cellPolygon(i);
     if (!cell) return [];
-    const ring = cell.slice(0, -1).map(([x, z]) => [x, z] as Point2);
-    return intersect(fp, [[ring]]);
+    const ring: MultiPolygon = [[cell.slice(0, -1).map(([x, z]) => [x, z] as Point2)]];
+    const piece = intersect(rest, ring);
+    rest = difference(rest, ring);
+    return piece;
   });
 }
 
