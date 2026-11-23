@@ -193,7 +193,9 @@ describe('terrain v2 stage', () => {
       const kinds = (r: typeof small) => { const m: Record<string, number> = {}; for (const c of r.children) m[c.kind] = (m[c.kind] ?? 0) + 1; return m; };
       const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(2, 0.25 * b);
       expect(near(big.stats.cells, small.stats.cells), `seed ${seed} cells ${big.stats.cells} vs ${small.stats.cells}`).toBe(true);
-      const tris = (r: typeof small) => r.children.reduce((t, c) => t + (c.data?.ground?.triangles.length ?? 0), 0);
+      // The river's bed isn't counted: it's relatively longer and narrower at 30 km (150 m, not
+      // 15 × 40), so it needs more bed points; the rest of the ground keeps its triangle count.
+      const tris = (r: typeof small) => r.children.filter(c => c.kind !== 'river').reduce((t, c) => t + (c.data?.ground?.triangles.length ?? 0), 0);
       expect(near(tris(big), tris(small)), `seed ${seed} triangles ${tris(big)} vs ${tris(small)}`).toBe(true);
       // Kinds shift a little (the river is relatively narrower: 150 m, not 15 × 40), the total doesn't.
       const kb = kinds(big), ks = kinds(small);
@@ -202,6 +204,37 @@ describe('terrain v2 stage', () => {
       for (const k of Object.keys(ks)) expect(Math.abs((kb[k] ?? 0) - ks[k]) <= Math.max(2, 0.5 * ks[k]), `seed ${seed} ${k}: ${kb[k]} vs ${ks[k]}`).toBe(true);
     }
   });
+
+  it('keeps the riverbed under the water at 30 km', () => {
+    // Bed points once scaled with the cell size (360 m apart on a 150 m river): triangles then
+    // joined bank to bank across the river at bank height, showing as strips over the water.
+    const fresh = defaultsFor(terrain.settings);
+    const scaled = Object.fromEntries(Object.keys(SMALL_SCALE.terrain).map(k => [k, fresh[k]])) as Partial<Settings>;
+    for (const seed of [1, 2, 3]) {
+      const r = run(scaled, seed, 30000);
+      const river = r.children.find(c => c.kind === 'river')!;
+      const { course, profile, ground } = river.data!;
+      const w = Number(fresh.riverWidth);
+      let bad = 0, total = 0;
+      for (let k = 1; k < course!.length - 1; k++) {
+        const [a, b] = [course![k - 1], course![k + 1]];
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const nx = -(b[1] - a[1]) / len, nz = (b[0] - a[0]) / len;
+        for (const off of [-w / 4, 0, w / 4]) {
+          const p: [number, number] = [course![k][0] + nx * off, course![k][1] + nz * off];
+          if (!containsPoint(river.geometry.footprint, p)) continue;
+          const bed = heightOnSurface(ground!, p[0], p[1]);
+          if (bed === null) continue;
+          total++;
+          if (bed > riverSurfaceAt(course!, profile!, p) - 0.25) bad++;
+        }
+      }
+      expect(total).toBeGreaterThan(50);
+      // A flat far above the river right on its bank still makes a cliff into it (seed 2,
+      // separate issue); everywhere else the bed is under water.
+      expect(bad, `seed ${seed}: ${bad} of ${total} bed points at or above the water`).toBeLessThanOrEqual(0.01 * total);
+    }
+  }, 60_000);
 
   it('handles a 5000 m site (timing logged)', () => {
     const r = run({}, 3, 5000);

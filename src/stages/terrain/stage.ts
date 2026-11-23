@@ -259,16 +259,19 @@ export const terrain: Stage = {
     if (water.river && course && profile && area(water.river.polygon) > 0) {
       const surf = (p: Point2) => riverSurfaceAt(course, profile, p);
       const bedAt = (p: Point2) => surf(p) - RIVER_DEPTH;
+      // Bed points follow the river's width (25 m at 40 m), not the cell size: spaced farther
+      // than the river is wide, triangles joined bank to bank over the water at bank height.
+      const bedStep = 0.625 * s.riverWidth;
       let lastBed = 0;
       const bed: [number, number, number][] = [
         // Course points about every 25 m (the grid's spacing); every one (~8 m apart) only
         // added triangles under the water.
         ...course.flatMap((p, i): [number, number, number][] => {
-          if (i > 0 && i < course.length - 1 && Math.hypot(p[0] - course[lastBed][0], p[1] - course[lastBed][1]) < s.cellSize / 5) return [];
+          if (i > 0 && i < course.length - 1 && Math.hypot(p[0] - course[lastBed][0], p[1] - course[lastBed][1]) < bedStep) return [];
           lastBed = i;
           return [[p[0], p[1], profile[i] - RIVER_DEPTH]];
         }),
-        ...bedPoints(water.river.polygon, s.cellSize / 5, bedAt),
+        ...bedPoints(water.river.polygon, bedStep, bedAt),
       ];
       // Edge points that aren't land corners border water (the sea at the mouth): bed, not bank.
       const ground = decimate(constrainedSurface(water.river.polygon, p => {
