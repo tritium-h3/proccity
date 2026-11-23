@@ -140,8 +140,8 @@ Anchors are placed in this order, all deterministic from the stage rng:
    - being near water (sea or river within about 300 m);
    - being away from the site edge.
 
-   Pick randomly among the top few scores. It gets the densest type the Growth budget allows
-   (Financial, unless Growth leaves no Financial budget).
+   Pick randomly among the top few scores. Its type comes from Growth (see Budgets):
+   Financial at the default.
 2. **Minor centres** (Settlements − 1): flat or slope districts, picked by farthest-point
    sampling in travel distance from the centres already placed, with a minimum spacing of
    about 600 m. Each gets Town core. If none fits the spacing, there are fewer.
