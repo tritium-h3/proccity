@@ -18,14 +18,15 @@ import { allowedOn, TYPE_LABEL, TYPES, type DistrictType, type TerrainKind } fro
 
 const LAND = new Set<string>(['flat', 'slope', 'hills']);
 const WATER = new Set<string>(['sea', 'river', 'pond']);
-const NEAR = 300;       // m: flat land and water counted around a candidate main centre
-const EDGE = 200;       // m: too close to the site edge for a main centre
+// Distances in units of a district's width (sqrt of its area, 283 m at the old 8 ha default).
+const NEAR = 300 / 283; // flat land and water counted around a candidate main centre
+const EDGE = 200 / 283; // too close to the site edge for a main centre
 
 export const districts: Stage = {
   id: 'districts',
   title: 'Districts',
   settings: [
-    { key: 'districtSize', label: 'District size', type: 'number', min: 2, max: 30, step: 1, default: 8, unit: 'ha', help: 'Regions bigger than about 1.5 × this are cut into several districts' },
+    { key: 'districtSize', label: 'District size', type: 'number', min: 450, max: 6750, step: 150, default: 1800, unit: 'ha', help: 'Regions bigger than about 1.5 × this are cut into several districts' },
     { key: 'settlements', label: 'Settlements', type: 'number', min: 1, max: 8, step: 1, default: 4, help: 'Centres, including the main one' },
     { key: 'growth', label: 'Growth', type: 'number', min: 0, max: 1, step: 0.05, default: 0.5, help: 'From villages to a city' },
   ],
@@ -43,6 +44,7 @@ export const districts: Stage = {
     const s = settings as Settings & { districtSize: number; settlements: number; growth: number };
     const children = new Map<string, RegionNode[]>();
     const land = leaves.filter(n => n.stage === 'terrain' && LAND.has(n.kind));
+    const width = Math.sqrt(s.districtSize * 1e4), near = NEAR * width, edgeMargin = EDGE * width;
     if (!land.length) return { children };
 
     // 1. Cut regions into districts.
@@ -60,14 +62,15 @@ export const districts: Stage = {
     // 3. How good a main-centre site each district is: flat land around it, water nearby,
     //    not at the site edge.
     const water = tree.children.filter(n => WATER.has(n.kind)).flatMap(n => n.geometry.footprint);
-    const nearWater = water.length ? offsetPolygons(water, NEAR) : [];
+    const nearWater = water.length ? offsetPolygons(water, near) : [];
     const sb = bounds(tree.geometry.footprint);
     const siteScore = infos.map((d, i) => {
       let flat = 0;
-      infos.forEach(o => { if (o.terrain === 'flat' && Math.hypot(o.centroid[0] - d.centroid[0], o.centroid[1] - d.centroid[1]) <= NEAR) flat += o.area; });
+      infos.forEach(o => { if (o.terrain === 'flat' && Math.hypot(o.centroid[0] - d.centroid[0], o.centroid[1] - d.centroid[1]) <= near) flat += o.area; });
       const [x, z] = d.centroid;
       const edge = Math.min(x - sb.minX, sb.maxX - x, z - sb.minZ, sb.maxZ - z);
-      return flat / 1e4 + (nearWater.length && area(intersect(nearWater, infos[i].footprint)) > 0 ? 40 : 0) - (edge < EDGE ? 30 : 0);
+      // Flat land in old-scale hectares (8 per district), so the water and edge terms keep their weight.
+      return (flat / (s.districtSize * 1e4)) * 8 + (nearWater.length && area(intersect(nearWater, infos[i].footprint)) > 0 ? 40 : 0) - (edge < edgeMargin ? 30 : 0);
     });
 
     // 4. The user's type overrides pin districts before the fill.
@@ -95,7 +98,7 @@ export const districts: Stage = {
     const fillSeed = Math.floor(rng() * 2 ** 32);
     const fill = assignStable({
       graph, terrain: infos.map(d => d.terrain), area: infos.map(d => d.area), siteScore,
-      growth: s.growth, settlements: s.settlements, pins, isWidePatch,
+      growth: s.growth, settlements: s.settlements, pins, isWidePatch, unit: width / 283,
     }, () => createRng(fillSeed));
 
     const counters = new Map<string, number>();

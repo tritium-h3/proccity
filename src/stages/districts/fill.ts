@@ -30,6 +30,8 @@ export interface FillInput {
   /** is this set of Undeveloped districts a wide patch (a hill in it, or over ~100 m across)? */
   isWidePatch(ids: number[]): boolean;
   rng: () => number;
+  /** scale of the distances below: a district's width / 283 m (1 at the old 8 ha districts) */
+  unit?: number;
 }
 export interface FillResult { types: DistrictType[]; anchor: (AnchorRole | null)[]; repairs: number; overflows: number }
 
@@ -80,6 +82,7 @@ export function tableViolations(types: DistrictType[], g: DistrictGraph, isWideP
 export function assignTypes(inp: FillInput): FillResult {
   const { graph: g, terrain, area, rng } = inp;
   const n = terrain.length;
+  const unit = inp.unit ?? 1;
   const types: (DistrictType | null)[] = Array(n).fill(null);
   const anchor: (AnchorRole | null)[] = Array(n).fill(null);
   const fixed = new Uint8Array(n);
@@ -136,7 +139,7 @@ export function assignTypes(inp: FillInput): FillResult {
   }
   for (let m = 1; m < inp.settlements && centres.length; m++) {
     const d = travelFrom(g, centres);
-    const options = [...Array(n).keys()].filter(i => free(i) && terrain[i] !== 'hills' && d[i] >= MINOR_SPACING && d[i] < Infinity && fits(i, 'town-core', false));
+    const options = [...Array(n).keys()].filter(i => free(i) && terrain[i] !== 'hills' && d[i] >= MINOR_SPACING * unit && d[i] < Infinity && fits(i, 'town-core', false));
     if (!options.length) break;
     // Better sites are likelier, but any spaced-out one may grow a town.
     options.sort((a, b) => inp.siteScore[b] - inp.siteScore[a] || a - b);
@@ -163,13 +166,13 @@ export function assignTypes(inp: FillInput): FillResult {
   }
 
   // Expected rank from travel to each centre (falling with distance), held down near Rural anchors.
-  const step = stepFor(inp.growth);
+  const step = stepFor(inp.growth) * unit;
   const fromCentre = centres.map(c => ({ rank: RANK[types[c]!], d: travelFrom(g, [c]) }));
   const nearRural = rural.length ? travelFrom(g, rural) : Array<number>(n).fill(Infinity);
   const expected = (i: number) => {
     let e = 1;
     for (const c of fromCentre) e = Math.max(e, c.rank - c.d[i] / step);
-    return nearRural[i] <= RURAL_REACH ? Math.min(e, 2) : e;
+    return nearRural[i] <= RURAL_REACH * unit ? Math.min(e, 2) : e;
   };
 
   // Fill outward from the anchors, nearest first.

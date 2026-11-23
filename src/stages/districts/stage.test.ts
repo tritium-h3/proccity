@@ -148,6 +148,20 @@ describe('districts stage', () => {
     }
   }, 120_000);
 
+  it('keeps the same structure at 30 km', () => {
+    for (const seed of [1, 2]) {
+      const site = createSite(30000);
+      const ts = defaultsFor(terrain.settings) as Settings;
+      const tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(seed), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
+      const ds = defaultsFor(districts.settings) as Settings;
+      const all = [...districts.run({ tree, leaves: leaves(tree), settings: ds, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children.values()].flat();
+      const small = run({}, seed).all;
+      expect(Math.abs(all.length - small.length), `seed ${seed}: ${all.length} vs ${small.length}`).toBeLessThanOrEqual(0.25 * small.length);
+      expect(check(all), `seed ${seed}`).toEqual([]);
+      expect(all.filter(d => d.attrs.anchor === 'main').map(d => d.attrs.type)).toEqual(['financial']);
+    }
+  }, 120_000);
+
   it('makes nothing without terrain', () => {
     const site = createSite(2000);
     const settings = { ...defaultsFor(districts.settings), ...SMALL_SCALE.districts } as Settings;
