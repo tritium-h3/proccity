@@ -129,7 +129,7 @@ A raster over the site at about 10 m per cell, built from the terrain. Each cell
   - the main centre and the minor town centres (district anchors from the districts stage);
   - the exits;
   - then Poisson-disk points over land at the arterial spacing. A hub must land on land, and
-    not on a slope steeper than about 15% where flatter land is near.
+    not on ground steeper than Max grade where flatter land is near.
 - **Exits:** dead ends. Each is a degree-1 hub on the site boundary: its one arterial leaves
   the site at a right angle and joins the nearest hub or arterial. Exits are not part of the
   Delaunay mesh, so they never form loops along the boundary. They're points on the site
