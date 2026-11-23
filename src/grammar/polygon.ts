@@ -85,3 +85,16 @@ export function simplifyLine(line: Point2[], tolerance: number): Point2[] {
   }
   return line.filter((_, k) => keep[k]);
 }
+
+/** Area-weighted centroid of a footprint (holes subtract). */
+export function centroid(mp: MultiPolygon): Point2 {
+  let a = 0, cx = 0, cz = 0;
+  for (const poly of mp) for (const ring of poly) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const f = ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+      a += f; cx += (ring[j][0] + ring[i][0]) * f; cz += (ring[j][1] + ring[i][1]) * f;
+    }
+  }
+  if (Math.abs(a) < 1e-12) { const p = mp[0]?.[0]?.[0]; return p ? [p[0], p[1]] : [0, 0]; }
+  return [cx / (3 * a), cz / (3 * a)];
+}
