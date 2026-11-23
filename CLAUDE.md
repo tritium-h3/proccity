@@ -13,7 +13,20 @@ v1's height-grid design is superseded), and **districts**
 (`docs/superpowers/specs/2026-11-23-districts-design.md`; the owner's zoning notes are in
 `docs/notes/zoningBlocks.md`), and **arterials**
 (`docs/superpowers/specs/2026-11-23-arterials-design.md`). Each real stage is designed with the
-owner one at a time. Local roads come next; whether collectors sit between arterials and local
+owner one at a time.
+
+**Scale (2026-11-24, `docs/superpowers/specs/2026-11-24-city-scale-design.md`):** sites are
+**30 km** by default (the slider runs 5–60 km). Layout sizes grew ×15 from the original 2 km
+(1.8 km terrain cells, ~4,500 ha regions, ~1,800 ha districts, 900 ha ponds), and the
+structure stayed the same: about the same numbers of cells, regions, districts and
+triangles. Relief is 600 m, rivers 150 m wide, roads 25 m wide, and arterials about 2 km
+apart. **No layout distance is hard-coded in metres:** each derives from a setting (cell
+size, river width, district size, spacing, site size), giving the old values at the old
+settings. Physical things don't scale: road width, max grade, vertical tolerances, park
+width. Tests written at 2 km pass `SMALL_SCALE` (`stages/testing.ts`), and 30 km tests check
+that the structure holds. A saved city keeps its own settings and site size.
+
+Local roads come next; whether collectors sit between arterials and local
 roads is pinned for that design.
 
 ## Architecture (`src/`)
@@ -82,11 +95,13 @@ roads is pinned for that design.
     removed while the surface stays within 0.25 m on land and 0.5 m on beds. The tolerance
     is checked at removed points and between vertices. Boundary vertices always stay, so
     regions still meet exactly.
-  - `stage.ts`: assembly. About 3,400 stored triangles, and about 170 ms in Node, at 2 km
-    with the defaults.
+  - `stage.ts`: assembly. About 3,400 stored triangles at the old 2 km scale. At 30 km it's
+    about 4,000–4,300, the extra going to the riverbed: bed points space at 0.625 × river
+    width, and the 30 km river is relatively longer. About 200 ms in Node.
 
-  **Polygon budget: terrain draws about 6,000 triangles at the defaults (ground plus water
-  surfaces), so later stages get the budget.** Check new terrain detail against it.
+  **Polygon budget: terrain draws about 6,000 triangles (ground plus water surfaces), so later
+  stages get the budget.** It's slightly over at 30 km because of the riverbed. Check new
+  terrain detail against it. Arterial ribbons add about 8,000 at 30 km.
 
   **Fine detail is cosmetic, in the renderer's shader. Never add it to the geometry.**
 - **`stages/districts/`:** each terrain land region is cut into districts (hills stay whole,
@@ -110,7 +125,8 @@ roads is pinned for that design.
     rounding where cuts cross long region edges exceeds the default 1e-6.
 - **`stages/arterials/`:** a sparse network that links (every district reachable, a few loops)
   and divides (superblocks). Density does **not** add roads.
-  - `grid.ts`: a 20 m cost raster. Grade along the heading costs steeply past **Max grade**,
+  - `grid.ts`: a cost raster with cells of spacing/35, but at most ~300 cells across (100 m at
+    30 km). Grade along the heading costs steeply past **Max grade**,
     but it's soft, never infinite. District borders are cheap corridors (×0.75), with a
     penalty for running parallel just beside them. Sea and ponds are blocked. The river costs
     ×30, more when not crossing square. Placed roads repel parallel neighbours.
@@ -161,9 +177,15 @@ roads is pinned for that design.
   completely, so the site ground isn't drawn under them; drawing both z-fights. The districts
   renderer reuses the terrain renderer (`buildTerrain` with a tint) and colours it from a
   texture baked from the district footprints (`scene/rasterise.ts`, shared via
-  `renderers/tint.ts`), so **districts add no triangles**. Arterials do the same, at 2048 px,
-  with superblocks in their district's colour and roads as asphalt. Only bridge decks are
-  geometry.
+  `renderers/tint.ts`), so **districts add no triangles**. Arterials tint superblocks and road
+  strips with their district's colour. Roads themselves are **ribbons** draped on the ground
+  as drawn (`scene/heightSampler.ts`, from the smoothed mesh), sampled every site/300. They
+  run at deck height over bridges. Bridge decks are geometry too. At 30 km a road is under 2
+  pixels of any baked texture.
+  The camera's depth, zoom limits, shadow depth range and bias, and the shader's noise
+  frequencies all follow the site size. **No hover work runs while a mouse button is held,**
+  and the hover outline is rebuilt only when the hovered region changes. Rebuilding it every
+  frame of a drag made orbiting crawl at 30 km.
 - `server.ts`: **the only listener.** Express serves the built frontend from `dist/`
   (`server/web.ts`: dotfiles ignored, nothing outside `dist/`, a 503 "Building…" page while
   `index.html` is missing) plus the placeholder `/api/health`, over HTTPS (`server/tls.ts`;
