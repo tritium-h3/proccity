@@ -31,7 +31,7 @@ describe('route', () => {
     const p = route(g, [50, 105], { params, goal: { cell: cellOf(g, 350, 305) } })!;
     let wet = 0, entries = 0, was = false;
     for (let i = 0; i + 1 < p.length; i++) for (let t = 0; t < 1; t += 0.01) {
-      const x = p[i][0] + (p[i + 1][0] - p[i][0]) * t, z = p[i][1] + (p[i + 1][1] - p[i][1]) * t;
+      const x = p[i][0] + (p[i + 1][0] - p[i][0]) * t;
       const inside = x > 180 && x < 220;
       if (inside) wet += Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]) * 0.01;
       if (inside && !was) entries++;
