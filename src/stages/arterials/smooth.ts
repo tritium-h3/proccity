@@ -9,10 +9,10 @@ import { simplifyLine } from '../../grammar/polygon.js';
 // m: grid paths step every 20–45 m, too short to fit a curve radius between corners; dropping
 // vertices within this of the line leaves segments long enough for the arcs.
 const SIMPLIFY = 12;
-const ARC_STEP = 10;  // m between arc points
+const ARC_PER_RADIUS = 6; // arc points per radius of arc length (10 m at a 60 m radius)
 
-export function smoothRoad(line: Point2[], radius: number): Point2[] {
-  const p = simplifyLine(line, SIMPLIFY);
+export function smoothRoad(line: Point2[], radius: number, simplify = SIMPLIFY): Point2[] {
+  const p = simplifyLine(line, simplify);
   if (p.length < 3) return p;
   const out: Point2[] = [p[0]];
   // How far along each segment the previous corner's arc already reaches.
@@ -30,7 +30,7 @@ export function smoothRoad(line: Point2[], radius: number): Point2[] {
     const side = Math.sign(u[0] * v[1] - u[1] * v[0]);
     const centre: Point2 = [start[0] - u[1] * r * side, start[1] + u[0] * r * side];
     const a0 = Math.atan2(start[1] - centre[1], start[0] - centre[0]);
-    const steps = Math.max(2, Math.ceil((r * turn) / ARC_STEP));
+    const steps = Math.max(2, Math.ceil((turn * ARC_PER_RADIUS)));
     for (let k = 0; k <= steps; k++) {
       const ang = a0 + side * turn * (k / steps);
       out.push([centre[0] + r * Math.cos(ang), centre[1] + r * Math.sin(ang)]);

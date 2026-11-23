@@ -20,15 +20,20 @@ export interface Grid {
   road: Float32Array; roadNormal: Float32Array;
   /** m to the nearest water edge (land cells), and that edge's normal */
   bank: Float32Array; bankNormal: Float32Array;
+  /** distances the costs use (m), scaled with the city: see GridScale */
+  band: number; edgeScale: number; roadReach: number; bankExtra: number;
 }
+/** Distances that scale with the city. Defaults are the 2 km-scale values (20 m cells). */
+export interface GridScale { band?: number; edgeScale?: number; roadReach?: number; riverReach?: number; bankExtra?: number }
 export interface GridInput {
   bounds: { minX: number; minZ: number; size: number };
   elevAt(x: number, z: number): number;
   kindAt(x: number, z: number): number;
   districts: MultiPolygon[];
   river?: MultiPolygon;
-  /** all water (sea, river, ponds): running alongside a bank costs, so road bands don't
-   *  spill lengthwise over water (they became long "bridges" along the river) */
+  /** edges a road shouldn't run along (all water, and the site's own edge): running beside
+   *  one costs, so bands don't spill lengthwise over water (they became long "bridges" along
+   *  the river) or hug the edge of the map; crossing is free */
   water?: MultiPolygon;
   /** border segments to leave out, e.g. the site's own edge (roads hugged it) */
   skipSegment?(a: Point2, b: Point2): boolean;
@@ -39,7 +44,7 @@ export interface GridInput {
 }
 export interface CostParams { maxGrade: number; roadWidth: number; usableWidth: number }
 
-const BORDER_BAND = 40;   // m beside a border where running parallel costs
+const BORDER_BAND = 40;   // m beside a border where running parallel costs (2 cells)
 const EDGE_SCALE = 125;   // m: about half a district; cost rises gently towards its edges
 // Cost on a district border. At 0.5 roads traced every jag of the (Voronoi) borders.
 const CORRIDOR = 0.75;
@@ -116,7 +121,7 @@ function nearest(g: Grid, segs: Seg[], reach: number, dist: Float32Array, normal
   }
 }
 
-export function buildGrid(inp: GridInput, cell: number): Grid {
+export function buildGrid(inp: GridInput, cell: number, sc: GridScale = {}): Grid {
   const { minX, minZ, size } = inp.bounds;
   const w = Math.ceil(size / cell), h = w, n = w * h;
   const g: Grid = {
@@ -126,6 +131,7 @@ export function buildGrid(inp: GridInput, cell: number): Grid {
     riverNormal: new Float32Array(n),
     road: new Float32Array(n).fill(Infinity), roadNormal: new Float32Array(n),
     bank: new Float32Array(n).fill(Infinity), bankNormal: new Float32Array(n),
+    band: sc.band ?? BORDER_BAND, edgeScale: sc.edgeScale ?? EDGE_SCALE, roadReach: sc.roadReach ?? ROAD_REACH, bankExtra: sc.bankExtra ?? 10,
   };
   if (inp.kinds) {
     g.kind.fill(BLOCKED);
@@ -136,19 +142,19 @@ export function buildGrid(inp: GridInput, cell: number): Grid {
     for (const sf of inp.surfaces) paintSurface(g, sf);
     for (let c = 0; c < n; c++) if (Number.isNaN(g.elev[c])) { const [x, z] = centreOf(g, c); g.elev[c] = inp.elevAt(x, z); }
   } else for (let c = 0; c < n; c++) { const [x, z] = centreOf(g, c); g.elev[c] = inp.elevAt(x, z); }
-  nearest(g, inp.districts.flatMap(d => segsOf(d, inp.skipSegment)), BORDER_BAND + EDGE_SCALE, g.border, g.borderNormal);
+  nearest(g, inp.districts.flatMap(d => segsOf(d, inp.skipSegment)), g.band + g.edgeScale, g.border, g.borderNormal);
   if (inp.river) {
     const scratch = new Float32Array(n).fill(Infinity);
-    nearest(g, segsOf(inp.river), RIVER_REACH, scratch, g.riverNormal, c => g.kind[c] === RIVER);
+    nearest(g, segsOf(inp.river), sc.riverReach ?? RIVER_REACH, scratch, g.riverNormal, c => g.kind[c] === RIVER);
   }
-  if (inp.water) nearest(g, segsOf(inp.water, inp.skipSegment), BORDER_BAND, g.bank, g.bankNormal, c => g.kind[c] === LAND || g.kind[c] === HILLS);
+  if (inp.water) nearest(g, segsOf(inp.water), g.band, g.bank, g.bankNormal, c => g.kind[c] === LAND || g.kind[c] === HILLS);
   return g;
 }
 
 export function markRoad(g: Grid, line: Point2[]): void {
   const segs: Seg[] = [];
   for (let i = 0; i + 1 < line.length; i++) segs.push([line[i][0], line[i][1], line[i + 1][0], line[i + 1][1]]);
-  nearest(g, segs, ROAD_REACH, g.road, g.roadNormal);
+  nearest(g, segs, g.roadReach, g.road, g.roadNormal);
 }
 
 /** How square-on a heading meets a line with the given normal: 1 straight across, 0 along. */
@@ -163,11 +169,11 @@ export function stepCost(g: Grid, a: number, b: number, heading: number, p: Cost
   const k = g.kind[b];
   const base = k === RIVER ? 30 * (1 + 4 * (1 - across(heading, g.riverNormal[b]))) : k === HILLS ? 1.5 : 1;
   const d = g.border[b];
-  const borderF = d <= p.roadWidth / 2 ? CORRIDOR : d < BORDER_BAND ? 1 + 3 * (1 - across(heading, g.borderNormal[b])) : 1;
-  const edgeF = 1 + 0.3 * Math.max(0, Math.min(1, 1 - d / EDGE_SCALE));
+  const borderF = d <= p.roadWidth / 2 ? CORRIDOR : d < g.band ? 1 + 3 * (1 - across(heading, g.borderNormal[b])) : 1;
+  const edgeF = 1 + 0.3 * Math.max(0, Math.min(1, 1 - d / g.edgeScale));
   const r = g.road[b];
   const roadF = r > p.roadWidth / 2 && r < p.usableWidth ? 1 + 3 * (1 - across(heading, g.roadNormal[b])) : 1;
   // Beside water, running along the bank costs (a band there spills over the water).
-  const bankF = g.bank[b] < p.roadWidth / 2 + 10 ? 1 + 3 * (1 - across(heading, g.bankNormal[b])) : 1;
+  const bankF = g.bank[b] < p.roadWidth / 2 + g.bankExtra ? 1 + 3 * (1 - across(heading, g.bankNormal[b])) : 1;
   return len * base * gradeF * borderF * edgeF * roadF * bankF;
 }

@@ -184,13 +184,15 @@ describe('arterials stage', () => {
     }
   });
 
-  it('handles a 5 km site in reasonable time', () => {
-    const site = createSite(5000);
+  it('handles a 30 km site at the new defaults in reasonable time', () => {
+    const site = createSite(30000);
     const ts = defaultsFor(terrain.settings) as Settings;
     let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(3), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
     tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: defaultsFor(districts.settings) as Settings, rng: createRng(22), attr: () => undefined, overridesForStage: [] }).children);
     const out = arterials.run({ tree, leaves: leaves(tree), settings: defaultsFor(arterials.settings) as Settings, rng: createRng(44), attr: () => undefined, overridesForStage: [] });
-    expect(out.data!.get('site')!.stats!.ms).toBeLessThan(6000);
+    const st = out.data!.get('site')!.stats!;
+    expect(st.ms, JSON.stringify(st)).toBeLessThan(3000);
+    for (const d of districtsOf(tree)) expect(partition(d, out.children.get(d.id) ?? []), d.id).toEqual([]);
   }, 120_000);
 
   it('is deterministic and quick', () => {
