@@ -7,7 +7,7 @@ import * as THREE from 'three/webgpu';
 import { groundHeightAt } from '../../doc/ground.js';
 import { walk } from '../../doc/tree.js';
 import type { Point2, RegionNode } from '../../doc/types.js';
-import { bounds } from '../../grammar/polygon.js';
+import { bounds, containsPoint } from '../../grammar/polygon.js';
 import type { DistrictType } from '../../stages/districts/rules.js';
 import { flatSurface } from '../../stages/terrain/ground.js';
 import { heightSampler } from '../heightSampler.js';
@@ -50,8 +50,16 @@ export const renderArterials: StageRenderer = (nodes, ctx) => {
   const size = Math.max(sb.maxX - sb.minX, sb.maxZ - sb.minZ);
   const width = Number(nodes.find(n => n.kind === 'arterial')?.attrs.width ?? 25);
   const heightAt = out.ground ? heightSampler(out.ground.pos, out.ground.tris, { minX: sb.minX, minZ: sb.minZ, size }, size / 1500) : (x: number, z: number) => groundHeightAt(ctx.tree, x, z);
+  // Over a bridge a ribbon runs at the deck: draped on the drawn ground it dived to the riverbed
+  // and showed through the water as a dark strip beside every deck.
+  const deckTop = new Map(bridges.map(b => [b, Math.max(...b.geometry.footprint.flat(2).map(([x, z]) => heightAt(x, z))) + 1]));
   const pos: number[] = [], idx: number[] = [];
   for (const road of ctx.tree.data?.roads ?? []) {
+    const ownBridges = bridges.filter(b => b.attrs.road === road.id);
+    const yAt = (x: number, z: number) => {
+      const b = ownBridges.find(br => containsPoint(br.geometry.footprint, [x, z]));
+      return b ? deckTop.get(b)! + 0.3 : heightAt(x, z) + LIFT;
+    };
     const line = resample(road.points, Math.max(20, size / 300));
     const base = pos.length / 3;
     line.forEach((p, i) => {
@@ -60,7 +68,7 @@ export const renderArterials: StageRenderer = (nodes, ctx) => {
       const nx = -(b[1] - a[1]) / len, nz = (b[0] - a[0]) / len;
       for (const side of [-1, 1]) {
         const x = p[0] + nx * side * width / 2, z = p[1] + nz * side * width / 2;
-        pos.push(x, heightAt(x, z) + LIFT, z);
+        pos.push(x, yAt(x, z), z);
       }
     });
     for (let i = 0; i + 1 < line.length; i++) {
@@ -85,7 +93,7 @@ export const renderArterials: StageRenderer = (nodes, ctx) => {
   const deck: number[] = [];
   for (const b of bridges) {
     const fp = b.geometry.footprint;
-    const top = Math.max(...fp.flat(2).map(([x, z]) => heightAt(x, z))) + 1;
+    const top = deckTop.get(b)!;
     const g = flatSurface(fp);
     for (const [i, j, k] of g.triangles) {
       const [a, bb, c] = [g.points[i], g.points[j], g.points[k]];
