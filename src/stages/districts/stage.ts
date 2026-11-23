@@ -9,9 +9,10 @@ import type { MultiPolygon, RegionNode, Settings } from '../../doc/types.js';
 import { intersect, offsetPolygons, union } from '../../grammar/clipper.js';
 import { area, bounds, centroid, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
+import { createRng } from '../../pipeline/seeds.js';
 import type { Stage } from '../types.js';
 import { cutRegion } from './cut.js';
-import { assignTypes } from './fill.js';
+import { assignStable } from './fill.js';
 import { buildGraph, isWide, type DistrictInfo } from './graph.js';
 import { allowedOn, TYPE_LABEL, TYPES, type DistrictType, type TerrainKind } from './rules.js';
 
@@ -89,10 +90,13 @@ export const districts: Stage = {
       return w;
     };
 
-    const fill = assignTypes({
+    // One seed for the fill, replayed for each refill, so a pin that obeys the rules changes
+    // only its own district (assignStable).
+    const fillSeed = Math.floor(rng() * 2 ** 32);
+    const fill = assignStable({
       graph, terrain: infos.map(d => d.terrain), area: infos.map(d => d.area), siteScore,
-      growth: s.growth, settlements: s.settlements, pins, isWidePatch, rng,
-    });
+      growth: s.growth, settlements: s.settlements, pins, isWidePatch,
+    }, () => createRng(fillSeed));
 
     const counters = new Map<string, number>();
     parts.forEach((p, i) => {

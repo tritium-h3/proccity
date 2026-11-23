@@ -44,5 +44,8 @@ export const renderDistricts: StageRenderer = (nodes, ctx) => {
     mesh: p.mesh,
     nodeIdAt: (pt: [number, number]) => nodes.find(n => containsPoint(n.geometry.footprint, pt))?.id ?? p.nodeIdAt?.(pt) ?? null,
   }));
+  // Materials don't dispose their textures: without this each rebuild (every slider drag)
+  // stranded another 4 MB texture on the GPU.
+  base.object.userData.dispose = () => tex.dispose();
   return { object: base.object, pickables };
 };

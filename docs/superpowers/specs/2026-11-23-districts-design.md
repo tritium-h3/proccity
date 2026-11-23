@@ -220,6 +220,11 @@ these maxima at Growth g:
   "Financial needs flat land".
 - Two pinned districts that break the table are the user's choice and are left alone. The
   fill works around pins.
+- **A pin disturbs as little as possible** (added after the owner tried it: changing one type
+  rerolled the whole map). The city is filled as if nothing were pinned. Then each pin,
+  oldest first, is simply applied if it obeys the terrain, the table and the patch rule where
+  it lands. Only a pin that breaks them refills the city around the pins so far, from the
+  same seed.
 
 ### Output
 

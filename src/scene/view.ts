@@ -48,6 +48,8 @@ export function buildView(v: ViewState): BuiltView {
     pickables,
     dispose() {
       group.traverse(o => {
+        // Renderers attach userData.dispose for what materials don't own (baked textures).
+        if (typeof o.userData.dispose === 'function') o.userData.dispose();
         if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
           o.geometry.dispose();
           (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());

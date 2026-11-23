@@ -220,3 +220,30 @@ export function assignTypes(inp: FillInput): FillResult {
   }
   return { types: final, anchor, repairs, overflows };
 }
+
+/** Assign types so that pinning a district disturbs as little as possible. The city is filled
+ *  as if nothing were pinned; then each pin (oldest first) is simply applied when it obeys the
+ *  rules (terrain, the table, narrow patches) where it lands. Only a pin that breaks them
+ *  refills the city around all the pins so far. A plain pinned fill reshuffled every
+ *  district's random draws, so changing one type changed the whole map. `makeRng` must return
+ *  the same sequence each call. */
+export function assignStable(inp: Omit<FillInput, 'rng'>, makeRng: () => () => number): FillResult {
+  let current = assignTypes({ ...inp, pins: new Map(), rng: makeRng() });
+  const applied = new Map<number, DistrictType>();
+  for (const [i, t] of inp.pins) {
+    if (!allowedOn(t, inp.terrain[i])) continue;
+    applied.set(i, t);
+    const types = current.types.slice();
+    types[i] = t;
+    // Pairs of pins that break the table are the user's own choice.
+    const broken = tableViolations(types, inp.graph, inp.isWidePatch).some(([a, b]) => !(applied.has(a) && applied.has(b)));
+    if (!broken) {
+      const anchor = current.anchor.slice();
+      anchor[i] = null;
+      current = { ...current, types, anchor };
+    } else {
+      current = assignTypes({ ...inp, pins: new Map(applied), rng: makeRng() });
+    }
+  }
+  return current;
+}

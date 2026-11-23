@@ -101,6 +101,9 @@ arterial roads come next.
     expected density (falling 200 + 500·Growth m per rank). **A narrow Undeveloped patch
     doesn't hide a jump**; only hills or wide patches (over ~100 m) separate districts. If
     nothing fits there's a budget overflow or a repair, both counted in the site's stats.
+    `assignStable` wraps it: the unpinned fill first, then each pin applied as is when it obeys
+    the rules, with a refill only when it doesn't. So changing one district's type doesn't
+    reroll the map.
   - Partition tests allow 1 mm per metre of district outline, since Clipper's millimetre
     rounding where cuts cross long region edges exceeds the default 1e-6.
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through

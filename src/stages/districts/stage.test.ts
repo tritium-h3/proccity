@@ -113,6 +113,25 @@ describe('districts stage', () => {
     expect(districts.validateOverride!(slope, 'type', 'suburban')).toBeNull();
   });
 
+  it('changes only the pinned district when the new type obeys the rules', () => {
+    const { all } = run();
+    const types = all.map(d => d.attrs.type as DistrictType);
+    let pick: { i: number; t: DistrictType } | null = null;
+    for (let i = 0; i < all.length && !pick; i++) {
+      if (all[i].attrs.anchor) continue;
+      for (const t of ['rural', 'suburban', 'town-core'] as DistrictType[]) {
+        if (t === types[i] || !allowedOn(t, all[i].attrs.terrain as TerrainKind)) continue;
+        const trial = all.map((d, j) => (j === i ? { ...d, attrs: { ...d.attrs, type: t } } : d));
+        if (!check(trial).length) { pick = { i, t }; break; }
+      }
+    }
+    expect(pick).not.toBeNull();
+    const target = all[pick!.i];
+    const o: Override = { id: 'o2', stage: 'districts', kind: 'district', anchor: centroid(target.geometry.footprint), settings: { type: pick!.t }, createdAt: '2026-11-23T00:00:00.000Z' };
+    const after = run({}, 1, {}, [o]).all;
+    after.forEach((d, j) => expect(d.attrs.type, d.id).toBe(j === pick!.i ? pick!.t : types[j]));
+  });
+
   it('survives extremes with the partition intact', () => {
     const cases: [Partial<Settings>, Partial<Settings>][] = [
       [{}, { relief: 400, hilliness: 1 }], [{ districtSize: 2 }, {}], [{ districtSize: 30 }, {}],

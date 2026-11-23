@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRng } from '../../pipeline/seeds.js';
-import { assignTypes, tableViolations, type FillInput } from './fill.js';
+import { assignStable, assignTypes, tableViolations, type FillInput } from './fill.js';
 import type { DistrictGraph } from './graph.js';
 import { allowedOn, budgets, type DistrictType, type TerrainKind } from './rules.js';
 
@@ -117,6 +117,47 @@ describe('assignTypes', () => {
   it('is deterministic per seed and varies between seeds', () => {
     expect(assignTypes(input(12, 12, {}, 3)).types).toEqual(assignTypes(input(12, 12, {}, 3)).types);
     expect(assignTypes(input(12, 12, {}, 1)).types).not.toEqual(assignTypes(input(12, 12, {}, 2)).types);
+  });
+});
+
+describe('assignStable', () => {
+  const stable = (pins: Map<number, DistrictType>, seed = 1) => {
+    const { rng: _rng, ...rest } = input(12, 12, { pins }, seed);
+    return assignStable(rest, () => createRng(seed * 31));
+  };
+
+  it('changes only the pinned district when the pin obeys the rules', () => {
+    const base = stable(new Map());
+    const g = gridGraph(12, 12);
+    // A district and a different type that suits every neighbour (and any narrow patch).
+    let pick: [number, DistrictType] | null = null;
+    for (let i = 0; i < 144 && !pick; i++) {
+      if (base.anchor[i]) continue;
+      for (const t of ['rural', 'suburban', 'town-core', 'town-business'] as DistrictType[]) {
+        if (t === base.types[i]) continue;
+        const types = base.types.slice(); types[i] = t;
+        if (!tableViolations(types, g, wideIfThree).length) { pick = [i, t]; break; }
+      }
+    }
+    expect(pick).not.toBeNull();
+    const [i, t] = pick!;
+    const r = stable(new Map([[i, t]]));
+    expect(r.types[i]).toBe(t);
+    r.types.forEach((ty, j) => { if (j !== i) expect(ty, `district ${j}`).toBe(base.types[j]); });
+  });
+
+  it('refills around a pin that breaks the rules', () => {
+    const base = stable(new Map());
+    const g = gridGraph(12, 12);
+    const i = base.types.findIndex((t, j) => t === 'rural' && g.neighbours[j].some(n => base.types[n] === 'rural'));
+    const r = stable(new Map([[i, 'financial']]));
+    expect(r.types[i]).toBe('financial');
+    expect(tableViolations(r.types, g, wideIfThree)).toEqual([]);
+  });
+
+  it('is deterministic', () => {
+    const pins = new Map<number, DistrictType>([[5, 'suburban']]);
+    expect(stable(pins).types).toEqual(stable(pins).types);
   });
 });
 
