@@ -76,6 +76,14 @@ function checkNode(v: unknown, path: string) {
     if (v.data.profile !== undefined) {
       if (!Array.isArray(v.data.profile) || !v.data.profile.every((x: unknown) => typeof x === 'number')) fail(`${path}.data.profile`, 'should be an array of numbers');
     }
+    if (v.data.roads !== undefined) {
+      const at = `${path}.data.roads`;
+      if (!Array.isArray(v.data.roads)) fail(at, 'should be an array of roads');
+      v.data.roads.forEach((r: unknown, i: number) => {
+        if (!isObj(r) || typeof r.id !== 'string' || typeof r.exit !== 'boolean' || !Array.isArray(r.points)) fail(`${at}[${i}]`, 'should be { id, points, exit }');
+        (r.points as unknown[]).forEach((p, j) => checkPoint(p, `${at}[${i}].points[${j}]`));
+      });
+    }
     if (v.data.stats !== undefined) {
       if (!isObj(v.data.stats) || !Object.values(v.data.stats).every(x => typeof x === 'number')) fail(`${path}.data.stats`, 'should map names to numbers');
     }

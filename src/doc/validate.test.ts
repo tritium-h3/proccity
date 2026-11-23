@@ -74,3 +74,16 @@ describe('parseCityDoc ground surfaces', () => {
     expect(() => parseCityDoc(d)).toThrow(/ground/);
   });
 });
+
+describe('parseCityDoc roads', () => {
+  it('accepts road centrelines', () => {
+    const d = doc();
+    d.tree.data = { roads: [{ id: 'r0', points: [[0, 0], [10, 5]], exit: false }] };
+    expect(parseCityDoc(JSON.parse(JSON.stringify(d))).tree.data?.roads).toHaveLength(1);
+  });
+  it('rejects a malformed road', () => {
+    const d = doc();
+    (d.tree as unknown as { data: unknown }).data = { roads: [{ id: 1 }] };
+    expect(() => parseCityDoc(d)).toThrow(/roads/);
+  });
+});
