@@ -52,7 +52,7 @@ real stage is designed with the owner one at a time; districts come next.
     then smoothing (votes weighted by shared edge length), flat subtypes (coastal, river,
     shelf), ponds (seeded, then grown to about `pondSize` hectares; no contact at all, not even
     a corner, with sea, river, another pond or the site edge), and merging same-kind cells,
-    ponds included, into regions. `steppedFlats` keeps flats at very different levels from
+    ponds included, into regions (later cut down to size by `split.ts`). `steppedFlats` keeps flats at very different levels from
     touching: where cells of two flat regions touch, even at a corner, and differ by more than
     `FLAT_STEP` (2 m), the higher cell becomes slope. The stage repeats this with fresh levels
     until it's stable.
@@ -63,6 +63,13 @@ real stage is designed with the owner one at a time; districts come next.
     land comes from a smooth Gaussian height field over position, rising from the nearest
     pinned edge over about a cell's distance, never below the river floor (river surface +
     `riverHop`). Per-cell averages made cliffs with irregular cells.
+  - `split.ts`: once levels are settled, flat, slope and hills regions over 1.5 × `regionSize`
+    are cut at their necks: the cut along cell edges with the lowest cut length / sqrt(smaller
+    piece's area), with each piece ≥ 0.4 × the target. Candidates come from a spectral
+    (Fiedler) sweep plus a graph-distance sweep. It's repeated until nothing is oversized, and
+    a group with no legal cut is final. Small regions and slivers are never cut or merged, and
+    water is never split. Flat levels are per cell (shelves share one), so the pieces' ground
+    is unchanged.
   - `ground.ts`: constrained Delaunay surfaces (`delaunator` + `constrainautor`, with an
     `earcut` fallback).
   - `decimate.ts`: every region's finished surface is simplified. Interior vertices are

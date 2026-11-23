@@ -16,6 +16,7 @@ import { decimate } from './decimate.js';
 import { constrainedSurface } from './ground.js';
 import { classify, mergeRegions, steppedFlats } from './rules.js';
 import { roundPonds } from './ponds.js';
+import { splitGroup } from './split.js';
 import { layoutWater, riverProfile, type Shore } from './water.js';
 
 const SEA_DEPTH = 15;
@@ -126,6 +127,7 @@ export const terrain: Stage = {
     { key: 'pondSize', label: 'Pond size', type: 'number', min: 0.5, max: 10, step: 0.5, default: 4, unit: 'ha', help: 'Roughly how big each pond grows' },
     { key: 'cellSize', label: 'Cell size', type: 'number', min: 60, max: 250, step: 10, default: 120, unit: 'm', help: 'How finely the land is divided' },
     { key: 'irregularity', label: 'Irregularity', type: 'number', min: 0, max: 1, step: 0.05, default: 0.5, help: 'How many cells are cut into wedges and triangles' },
+    { key: 'regionSize', label: 'Region size', type: 'number', min: 5, max: 100, step: 5, default: 20, unit: 'ha', help: 'Big areas are cut into regions of about this size' },
   ],
   overridable: {
     flat: [{ key: 'elevation', label: 'Elevation', type: 'number', min: 1, max: 400, step: 1, default: 3, unit: 'm' }],
@@ -141,7 +143,7 @@ export const terrain: Stage = {
     const site = leaves.find(l => l.kind === 'site');
     if (!site) return { children: new Map() };
     const s = settings as Settings & { relief: number; hilliness: number; shore: Shore; river: boolean;
-      riverWidth: number; flatWidth: number; ponds: number; pondSize: number; cellSize: number; irregularity: number };
+      riverWidth: number; flatWidth: number; ponds: number; pondSize: number; cellSize: number; irregularity: number; regionSize: number };
     const footprint = site.geometry.footprint;
     const xs = footprint[0][0].map(p => p[0]);
     const size = Math.max(...xs) - Math.min(...xs);
@@ -220,6 +222,18 @@ export const terrain: Stage = {
       ({ levels, minLevel } = levelsFor(groups));
     }
     const vertexElevation = (p: Point2) => levels.vertex.get(vkey(p));
+
+    // Big land regions are cut at their necks into pieces of about regionSize. This runs after
+    // levels, so a flat's pieces keep its one level (and its minimum) and stay flush.
+    {
+      const split: RegionGroup[] = [], splitMin: number[] = [];
+      groups.forEach((g, gi) => {
+        const pieces = g.kind === 'flat' || g.kind === 'slope' || g.kind === 'hills' ? splitGroup(g.cells, cells, s.regionSize * 1e4) : [g.cells];
+        for (const p of pieces) { split.push({ ...g, cells: p }); splitMin.push(minLevel[gi]); }
+      });
+      groups = split;
+      minLevel = splitMin;
+    }
 
     // 5. Regions with their ground surfaces.
     const out: RegionNode[] = [];

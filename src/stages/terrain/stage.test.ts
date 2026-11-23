@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createCityDoc, createSite } from '../../doc/create.js';
-import { triangleArea } from '../../doc/ground.js';
+import { heightOnSurface, triangleArea } from '../../doc/ground.js';
 import { ancestry, leaves } from '../../doc/tree.js';
 import type { CityDoc, Override, RegionNode, Settings } from '../../doc/types.js';
 import { intersect, offsetPolygons } from '../../grammar/clipper.js';
@@ -10,6 +10,7 @@ import { generate } from '../../pipeline/generate.js';
 import { createRng } from '../../pipeline/seeds.js';
 import { defaultsFor, resolveAttr } from '../settings.js';
 import { riverSurfaceAt } from './elevation.js';
+import { interiorPoint } from './cells.js';
 import { terrain } from './stage.js';
 
 function run(over: Partial<Settings> = {}, seed = 1, size = 2000, overrides: Override[] = []) {
@@ -123,10 +124,41 @@ describe('terrain v2 stage', () => {
     throw new Error('no river flat found in seeds 1–6');
   });
 
+  describe('region size', () => {
+    const LAND = new Set(['flat', 'slope', 'hills']);
+    const largest = (r: ReturnType<typeof run>) => Math.max(...r.children.filter(c => LAND.has(c.kind)).map(c => area(c.geometry.footprint)));
+
+    it('keeps land regions near the region size', () => {
+      for (const seed of [1, 2, 3, 4]) expect(largest(run({}, seed)), `seed ${seed}`).toBeLessThanOrEqual(45e4);
+    });
+
+    it('leaves big regions whole at a large region size', () => {
+      expect(largest(run({ regionSize: 100 }, 1))).toBeGreaterThan(largest(run({}, 1)));
+    });
+
+    it('leaves the ground of split flats where it was', () => {
+      // River and coastal flats already step per cell, so a piece's average elevation can
+      // differ from the whole flat's; what must not change is the ground, and a shelf's level.
+      for (const seed of [1, 2, 3, 4]) {
+        const whole = run({ regionSize: 100 }, seed).children.filter(c => c.kind === 'flat');
+        for (const piece of run({}, seed).children.filter(c => c.kind === 'flat')) {
+          const parent = whole.find(w => containsPoint(w.geometry.footprint, interiorPoint(piece.geometry.footprint[0])))!;
+          expect(parent, `seed ${seed} ${piece.id}`).toBeDefined();
+          if (!piece.attrs.coastal && !piece.attrs.riverFlat) expect(piece.attrs.elevation, `seed ${seed} ${piece.id}`).toBe(parent.attrs.elevation);
+          for (const [x, z, y] of piece.data!.ground!.points) {
+            const h = heightOnSurface(parent.data!.ground!, x, z);
+            if (h !== null) expect(Math.abs(h - y), `seed ${seed} ${piece.id} at ${x},${z}`).toBeLessThanOrEqual(0.5);
+          }
+        }
+      }
+    });
+  });
+
   it('survives setting extremes with the partition intact', () => {
     const cases: [Partial<Settings>, number][] = [
       [{ cellSize: 250 }, 500], [{ cellSize: 60 }, 2000], [{ flatWidth: 0 }, 2000], [{ flatWidth: 5 }, 2000],
       [{ ponds: 6, shore: 'none', river: false }, 500], [{ relief: 20, hilliness: 0 }, 2000], [{ relief: 400, hilliness: 1 }, 2000],
+      [{ regionSize: 5, cellSize: 250 }, 2000], [{ regionSize: 100 }, 2000],
     ];
     for (const [over, size] of cases) {
       const r = run(over, 2, size);
@@ -373,10 +405,12 @@ describe('flats are flat (flats at different levels never touch)', () => {
     // A shared corner takes the lower flat's level, so a flat beside a much lower one tilted
     // right across. Before, 16 % of the area of flats touching no water was steeper than 5°.
     // (Flats touching water may tilt towards river banks and the shore: accepted, water wins.)
+    // Regions unsplit (regionSize 100): a split river flat's inland pieces step with the river
+    // like the rest of it, but touch no water, so they'd count here though nothing changed.
     let total = 0, steep = 0;
     const k = (p: number[]) => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`;
     for (const irregularity of [0, 0.5, 1]) for (const seed of [1, 2, 3, 4]) {
-      const kids = run({ irregularity }, seed).children;
+      const kids = run({ irregularity, regionSize: 100 }, seed).children;
       const wet = new Set(kids.filter(c => WATER.has(c.kind)).flatMap(c => c.data!.ground!.points.map(k)));
       for (const f of kids.filter(c => c.kind === 'flat')) {
         const g = f.data!.ground!;
