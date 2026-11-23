@@ -73,13 +73,14 @@ road across every district border. "Connected" means reachable.
 | Exits | 1–8, step 1 | 3 | Arterials leading off the site edge. |
 | Road width | 15–40 m, step 1 | 25 | Arterial width, including verges. |
 
-Constants, to be tuned against screenshots:
+| Junction angle | 30–90°, step 5 | 60 | The sharpest angle at which two arterials may meet. |
+| Curve radius | 20–200 m, step 10 | 60 | The tightest bend an arterial may take. |
+| Usable width | 30–150 m, step 10 | 60 | The narrowest land left between roads, or between a road and a district edge (about a quarter of a district's width at the default). |
 
-| Constant | Value |
-|---|---|
-| Minimum junction angle | 60° |
-| Minimum curve radius | 60 m |
-| Minimum usable width | 60 m (about a quarter of a district's width) |
+These three were constants in the first draft. The owner asked for them to be tunable, since
+they're judged by eye. They interact: a stricter junction angle prunes more loop links, so
+Redundancy has less effect. The cost-field weights, and the "quarter of its district's area"
+part of the sliver test, stay internal.
 
 ### 1. The cost field
 
@@ -167,8 +168,9 @@ report it.
 ### 6. The usable-space check
 
 - Compute the pieces of land left inside each district after subtracting all the road bands.
-- A piece is a **sliver** if it doesn't survive an inward offset of 30 m (so it's under about
-  60 m across), or is under a quarter of its district's area. Districts are about 250 m
+- A piece is a **sliver** if it doesn't survive an inward offset of half the Usable width
+  (30 m at the default, so it's under about 60 m across), or is under a quarter of its
+  district's area. Districts are about 250 m
   across, so thresholds are scaled to districts, not to the spacing. A road along a border
   makes no piece at all.
 - If a loop (redundancy) link produced the sliver, remove that link and recompute.
@@ -235,6 +237,7 @@ Log the stage time in the stats. A much slower result is a finding, not a pass.
   - slivers come only from counted required links;
   - the mean road grade is well below the grade of straight lines between the same hubs;
   - the result is deterministic per seed.
+- Extremes of every setting keep the partition and finish in time.
 - **Visual check:** screenshots on a few seeds, at spacing 400, 700 and 1200 and redundancy 0
   and 0.6, and in the app.
 
