@@ -191,12 +191,17 @@ describe('terrain v2 review fixes', () => {
       // proxy away from the bank: near a bend it can be the upstream, higher reach.
       const bank = offsetPolygons(river.geometry.footprint, 5);
       const near = offsetPolygons(river.geometry.footprint, 50);
+      // Pond rims are exempt from the 50 m tier: a pond sits half a metre below the lowest land
+      // it touches, which near a falling river can be a few metres under the water upstream.
+      // That's a pond in a hollow, not a levee; holding it up brought back perched ponds.
+      const k = (p: number[]) => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`;
+      const rims = new Set(r.children.filter(c => c.kind === 'pond').flatMap(c => c.data!.ground!.points.map(k)));
       let worstBank = 0, worstNear = 0;
       for (const c of r.children.filter(c => !WATER.has(c.kind))) {
         for (const p of c.data!.ground!.points) {
           if (!containsPoint(near, [p[0], p[1]])) continue;
           const below = riverSurfaceAt(river.data!.course!, river.data!.profile!, [p[0], p[1]]) - p[2];
-          worstNear = Math.max(worstNear, below);
+          if (!rims.has(k(p))) worstNear = Math.max(worstNear, below);
           if (containsPoint(bank, [p[0], p[1]])) worstBank = Math.max(worstBank, below);
         }
       }
@@ -367,7 +372,7 @@ describe('flats are flat (flats at different levels never touch)', () => {
   it('keeps flats away from water nearly level', () => {
     // A shared corner takes the lower flat's level, so a flat beside a much lower one tilted
     // right across. Before, 16 % of the area of flats touching no water was steeper than 5°.
-    // (Flats touching water tilt for other reasons: perched ponds, river banks.)
+    // (Flats touching water may tilt towards river banks and the shore: accepted, water wins.)
     let total = 0, steep = 0;
     const k = (p: number[]) => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`;
     for (const irregularity of [0, 0.5, 1]) for (const seed of [1, 2, 3, 4]) {

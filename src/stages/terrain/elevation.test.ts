@@ -129,3 +129,27 @@ describe('pond cluster elevations', () => {
     }
   });
 });
+
+describe('ponds sit in a hollow (a "levitating" pond was seen in the browser)', () => {
+  it('never lifts a flat it borders to hold its water', () => {
+    // A pond far from the river took a river floor that rises with distance from the river,
+    // so it sat above the flat beside it, and the flat ramped up to its rim.
+    let rims = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      const c = classify(cells, { flatWidth: 2, hilliness: 0.5, ponds: 4, pondSize: 6 }, createRng(seed));
+      const groups = mergeRegions(cells, c);
+      const { vertex, flatLevel } = computeLevels(cells, c, groups, { relief: 150, hilliness: 0.5, flatWidth: 2, course, profile, sea, river, overrides: [] }, createRng(seed + 100));
+      cells.forEach((cell, i) => {
+        if (c.kind[i] !== 'flat') return;
+        for (const p of cell.poly[0]) {
+          const k = vkey(p);
+          const onPond = cells.some((o, j) => c.kind[j] === 'pond' && o.poly[0].some(q => vkey(q) === k));
+          if (!onPond) continue;
+          rims++;
+          expect(vertex.get(k)!, `seed ${seed}, flat cell ${i}`).toBeLessThanOrEqual(flatLevel[i]! + 1e-9);
+        }
+      });
+    }
+    expect(rims).toBeGreaterThan(0);
+  }, 60_000);
+});

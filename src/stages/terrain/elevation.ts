@@ -76,16 +76,19 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
   // Ponds: one level per pond, half a metre below the lowest land cell around the whole pond.
   const levelOf = (i: number) => flatLevel[i] ?? base[i];
   const pondSurface: (number | null)[] = cells.map(() => null);
-  for (const g of groups) {
+  const setPondLevels = () => { for (const g of groups) {
     if (g.kind !== 'pond') continue;
     const inPond = new Set(g.cells);
-    const around = [...new Set(g.cells.flatMap(ci => cells[ci].neighbours))].filter(n => !inPond.has(n)).map(levelOf);
-    // Never below the river beside it (via its cells' river floor); if that's above its lowest
-    // neighbour, the bank rule lifts those corners, so the water never tops its rim.
-    const floor = Math.max(0, ...g.cells.map(ci => riverFloor(cells[ci])));
-    const surface = Math.max(1, (around.length ? Math.min(...around) : Math.min(...g.cells.map(ci => base[ci]))) - 0.5, floor - 0.5);
+    // Everything it touches, corners included: a flat meeting it only at a corner was
+    // otherwise left out, and its corner was lifted to the rim.
+    const around = [...new Set(g.cells.flatMap(ci => cells[ci].adjacent))].filter(n => !inPond.has(n)).map(levelOf);
+    // No river floor of its own: the land around it already has one, and a pond's floor rose
+    // with distance from the river (it's meant for land), lifting the pond above its
+    // neighbours, which were then bent up to hold it (a "levitating" pond).
+    const surface = Math.max(1, (around.length ? Math.min(...around) : Math.min(...g.cells.map(ci => base[ci]))) - 0.5);
     for (const ci of g.cells) pondSurface[ci] = surface;
-  }
+  } };
+  setPondLevels();
 
   // Vertex elevations.
   const incident = new Map<string, { p: Point2; cells: number[] }>();
@@ -206,6 +209,7 @@ export function computeLevels(cells: Cell[], c: Classified, groups: RegionGroup[
       }
     });
     if (!changed) break;
+    setPondLevels(); // a lowered flat beside a pond lowers the pond with it
     vertex = computeVertices();
   }
 
