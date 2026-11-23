@@ -58,3 +58,30 @@ describe('stepCost', () => {
     expect(step(g, 135, 105, E)).toBeCloseTo(before, 5); // crossing towards it is fine
   });
 });
+
+describe('grid fixes', () => {
+  it('ignores border segments it is told to skip (the site edge)', () => {
+    const g = grid({ districts: [rect(0, 0, 400, 400)], skipSegment: (a, b) => a[0] === b[0] || a[1] === b[1] });
+    expect(g.border[cellOf(g, 5, 200)]).toBe(Infinity);
+  });
+
+  it('makes running along a water bank cost, but not crossing it', () => {
+    const river: MultiPolygon = rect(180, 0, 220, 400);
+    const g = grid({ kindAt: x => (x > 180 && x < 220 ? RIVER : LAND), river, water: river });
+    const along = step(g, 165, 105, N), across = step(g, 165, 105, E), inland = step(g, 85, 105, N);
+    expect(along).toBeGreaterThan(1.5 * inland);
+    expect(across).toBeLessThan(along);
+  });
+
+  it('rasterises kinds and surfaces to the same answers as point lookups', () => {
+    const kinds = [{ footprint: rect(0, 0, 400, 400), kind: LAND }, { footprint: rect(100, 100, 200, 300), kind: BLOCKED }];
+    const ground = { points: [[0, 0, 0], [400, 0, 40], [400, 400, 40], [0, 400, 0]] as [number, number, number][], triangles: [[0, 1, 2], [0, 2, 3]] as [number, number, number][] };
+    const fast = grid({ kinds, surfaces: [ground] });
+    const slow = grid({ kindAt: (x, z) => (x > 100 && x < 200 && z > 100 && z < 300 ? BLOCKED : LAND), elevAt: x => 0.1 * x });
+    for (const [x, z] of [[55, 55], [155, 205], [305, 15], [395, 395]] as [number, number][]) {
+      const c = cellOf(fast, x, z);
+      expect(fast.kind[c], `${x},${z}`).toBe(slow.kind[c]);
+      expect(fast.elev[c]).toBeCloseTo(slow.elev[c], 4);
+    }
+  });
+});

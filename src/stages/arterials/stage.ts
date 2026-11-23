@@ -24,6 +24,8 @@ const CELL = 20;            // m: routing grid
 const NUDGE = 60;           // m: centres move this far to flatter ground
 const MAX_LINK = 1.8;       // × spacing: longest mesh link
 const BLOCKED_SHARE = 0.3;  // a link mostly over sea or pond isn't a candidate
+const EXIT_STUB = 2;        // cells an exit runs straight in from the edge
+const WATER = new Set(['sea', 'river', 'pond']);
 
 interface Road { id: string; points: Point2[]; exit: boolean; required: boolean }
 
@@ -57,25 +59,26 @@ export const arterials: Stage = {
     const sb = bounds(tree.geometry.footprint);
     const size = Math.max(sb.maxX - sb.minX, sb.maxZ - sb.minZ);
     const onSiteEdge = (p: Point2) => Math.min(Math.abs(p[0] - sb.minX), Math.abs(p[0] - sb.maxX), Math.abs(p[1] - sb.minZ), Math.abs(p[1] - sb.maxZ)) < 0.5;
-    // District borders as corridors, but not the site's own edge: roads shouldn't hug it.
-    const borderFps: MultiPolygon[] = dists.map(d => d.geometry.footprint.map(poly => poly.map(ring => ring)));
+    // Kinds painted in order (later wins); elevations from the terrain's own triangles, water
+    // first so land wins along shared edges. Point lookups per cell took seconds at 5 km.
+    const water = terrainKids.filter(n => n.kind === 'sea' || n.kind === 'pond' || n.kind === 'river').flatMap(n => n.geometry.footprint);
     const g = buildGrid({
       bounds: { minX: sb.minX, minZ: sb.minZ, size },
       elevAt: (x, z) => groundHeightAt(tree, x, z),
-      kindAt: (x, z) => {
-        const p: Point2 = [x, z];
-        if (!containsPoint(tree.geometry.footprint, p) || blocked.some(b => containsPoint(b, p))) return BLOCKED;
-        if (river && containsPoint(river.geometry.footprint, p)) return RIVER;
-        return hills.some(h => containsPoint(h, p)) ? HILLS : LAND;
-      },
-      districts: borderFps,
+      kindAt: () => LAND,
+      kinds: [
+        { footprint: tree.geometry.footprint, kind: LAND },
+        ...hills.map(footprint => ({ footprint, kind: HILLS })),
+        ...(river ? [{ footprint: river.geometry.footprint, kind: RIVER }] : []),
+        ...blocked.map(footprint => ({ footprint, kind: BLOCKED })),
+      ],
+      surfaces: [...terrainKids.filter(n => WATER.has(n.kind)), ...terrainKids.filter(n => !WATER.has(n.kind))].flatMap(n => (n.data?.ground ? [n.data.ground] : [])),
+      districts: dists.map(d => d.geometry.footprint),
       river: river?.geometry.footprint,
+      water,
+      // District borders are corridors, but not the site's own edge: roads hugged it.
+      skipSegment: (a, b) => onSiteEdge(a) && onSiteEdge(b),
     }, CELL);
-    // Undo the corridor along the site edge (its segments all lie on the boundary).
-    for (let c = 0; c < g.w * g.h; c++) {
-      const [x, z] = centreOf(g, c);
-      if (g.border[c] < s.roadWidth && onSiteEdge([Math.max(sb.minX, Math.min(sb.maxX, x)), Math.max(sb.minZ, Math.min(sb.maxZ, z))]) && Math.min(x - sb.minX, sb.maxX - x, z - sb.minZ, sb.maxZ - z) <= g.border[c] + 1) g.border[c] = Infinity;
-    }
     const usable = (c: number) => g.kind[c] === LAND || g.kind[c] === HILLS;
     const gradeAt = (c: number) => {
       const i = c % g.w, j = Math.floor(c / g.w);
@@ -103,7 +106,10 @@ export const arterials: Stage = {
 
     // 2. Hubs: the town centres, then spaced points on usable, not-too-steep ground.
     const fixed = dists.filter(d => d.attrs.anchor === 'main' || d.attrs.anchor === 'minor').map(d => nudge(centroid(d.geometry.footprint)));
-    const hubs = poissonHubs(fixed, s.spacing, p => { const c = cellOf(g, p[0], p[1]); return containsPoint(tree.geometry.footprint, p) && usable(c) && gradeAt(c) <= params.maxGrade; }, { minX: sb.minX, minZ: sb.minZ, size }, rng);
+    // Sampled hubs keep away from the site edge, or links between them ran along it.
+    const margin = Math.min(150, s.spacing / 3);
+    const edgeDist = (p: Point2) => Math.min(p[0] - sb.minX, sb.maxX - p[0], p[1] - sb.minZ, sb.maxZ - p[1]);
+    const hubs = poissonHubs(fixed, s.spacing, p => { const c = cellOf(g, p[0], p[1]); return containsPoint(tree.geometry.footprint, p) && edgeDist(p) >= margin && usable(c) && gradeAt(c) <= params.maxGrade; }, { minX: sb.minX, minZ: sb.minZ, size }, rng);
 
     // 3. The mesh, with link costs estimated along the straight line.
     const estimate = (a: Point2, b: Point2) => {
@@ -129,8 +135,9 @@ export const arterials: Stage = {
 
     // 4. Route the links: required ones first (cheapest first), then loops.
     const roads: Road[] = [];
-    const lay = (points: Point2[], exit: boolean, required: boolean) => {
-      const line = smoothRoad(points, s.curveRadius);
+    const lay = (points: Point2[], exit: boolean, required: boolean, keep = 0) => {
+      // The first `keep` points stay as they are (an exit's straight stub), the rest is smoothed.
+      const line = keep > 0 ? [...points.slice(0, keep), ...smoothRoad(points.slice(keep - 1), s.curveRadius).slice(1)] : smoothRoad(points, s.curveRadius);
       roads.push({ id: `road:${roads.length}`, points: line, exit, required });
       markRoad(g, line);
     };
@@ -208,10 +215,15 @@ export const arterials: Stage = {
         return usable(c) && !blocked.some(b => containsPoint(b, inside));
       }, p => -gradeAt(cellOf(g, p[0], p[1])), rng);
       for (const e of exits) {
-        const start: Point2 = [e.at[0] + e.inward[0] * g.cell, e.at[1] + e.inward[1] * g.cell];
-        const path = route(g, start, { params, startHeading: Math.atan2(e.inward[1], e.inward[0]), goal: { touches: onRoad }, toward: centroid(tree.geometry.footprint) });
+        // Square-on: start at a cell centre just inside, put the exit point on the edge
+        // straight behind it, and go straight in for a couple of cells before turning.
+        const c0 = cellOf(g, e.at[0] + e.inward[0] * g.cell, e.at[1] + e.inward[1] * g.cell);
+        const start = centreOf(g, c0);
+        const back = (start[0] - e.at[0]) * e.inward[0] + (start[1] - e.at[1]) * e.inward[1];
+        const edge: Point2 = [start[0] - e.inward[0] * back, start[1] - e.inward[1] * back];
+        const path = route(g, start, { params, startHeading: Math.atan2(e.inward[1], e.inward[0]), straightStart: EXIT_STUB, goal: { touches: onRoad }, toward: centroid(tree.geometry.footprint) });
         if (!path) continue;
-        lay([e.at, ...path], true, true);
+        lay([edge, ...path], true, true, EXIT_STUB + 2);
         exitCount++;
       }
     }
@@ -221,6 +233,9 @@ export const arterials: Stage = {
     if (roads.length) {
       let all = union(roads.flatMap(bandOf), []);
       for (const d of dists) {
+        // Undeveloped land needn't be reached by an arterial (the owner: "it's not important to
+        // connect undeveloped districts"); roads may still cross it.
+        if (d.attrs.type === 'undeveloped') continue;
         const fp = d.geometry.footprint;
         if (area(intersect(fp, all)) > 1) continue;
         const target = centroid(fp);
@@ -277,9 +292,21 @@ export const arterials: Stage = {
     }
     let bridges = 0;
     if (river) {
-      const { kids, rest } = cut(river, 'bridge', 'water', i => ({ road: roads[i].id }));
+      // A bridge is where a road's centreline actually crosses the river. A band grazing the
+      // bank isn't one: its sliver stays water.
+      const rfp = river.geometry.footprint;
+      const crosses = (r: Road) => r.points.some((p, i) => i + 1 < r.points.length && [0.25, 0.5, 0.75].some(t => containsPoint(rfp, [p[0] + (r.points[i + 1][0] - p[0]) * t, p[1] + (r.points[i + 1][1] - p[1]) * t])) || containsPoint(rfp, p));
+      const kids: RegionNode[] = [];
+      exclusive.forEach((e, i) => {
+        if (!crosses(roads[i])) return;
+        const piece = intersect(rfp, e).filter(poly => area([poly]) >= s.roadWidth * s.roadWidth / 2);
+        if (!piece.length) return;
+        const name = `bridge:${kids.length}`;
+        kids.push({ id: childId(river.id, name), name, kind: 'bridge', stage: 'arterials', geometry: makeSlab(piece), attrs: { road: roads[i].id }, children: [] });
+      });
       bridges = kids.length;
       if (kids.length) {
+        const rest = difference(rfp, union(kids.flatMap(k => k.geometry.footprint), []));
         if (rest.length) kids.push({ id: childId(river.id, 'water:0'), name: 'water:0', kind: 'water', stage: 'arterials', geometry: makeSlab(rest), attrs: {}, children: [] });
         children.set(river.id, kids);
       }

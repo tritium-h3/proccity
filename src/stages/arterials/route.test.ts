@@ -64,3 +64,12 @@ describe('route', () => {
     expect(go()).toEqual(go());
   });
 });
+
+describe('route start', () => {
+  it('can be made to leave straight along its start heading', () => {
+    const g = grid({ elevAt: (_x, z) => 0.3 * Math.max(0, z - 100) }); // tempting to turn east at once
+    const p = route(g, [205, 15], { params, startHeading: Math.PI / 2, straightStart: 2, goal: { cell: cellOf(g, 385, 25) } })!;
+    for (const q of p.slice(0, 3)) expect(q[0]).toBeCloseTo(205, 5);
+    expect(p[2][1]).toBeGreaterThanOrEqual(15 + 2 * 10 - 1e-6);
+  });
+});

@@ -5,7 +5,7 @@
 // infinitely), prefer district borders because they're cheap corridors, and keep clear of
 // each other because running alongside a placed road costs.
 
-import type { MultiPolygon, Point2 } from '../../doc/types.js';
+import type { GroundSurface, MultiPolygon, Point2 } from '../../doc/types.js';
 
 export const LAND = 0, HILLS = 1, RIVER = 2, BLOCKED = 3;
 
@@ -18,6 +18,8 @@ export interface Grid {
   riverNormal: Float32Array;
   /** m to the nearest placed road, and the angle of that road's normal */
   road: Float32Array; roadNormal: Float32Array;
+  /** m to the nearest water edge (land cells), and that edge's normal */
+  bank: Float32Array; bankNormal: Float32Array;
 }
 export interface GridInput {
   bounds: { minX: number; minZ: number; size: number };
@@ -25,6 +27,15 @@ export interface GridInput {
   kindAt(x: number, z: number): number;
   districts: MultiPolygon[];
   river?: MultiPolygon;
+  /** all water (sea, river, ponds): running alongside a bank costs, so road bands don't
+   *  spill lengthwise over water (they became long "bridges" along the river) */
+  water?: MultiPolygon;
+  /** border segments to leave out, e.g. the site's own edge (roads hugged it) */
+  skipSegment?(a: Point2, b: Point2): boolean;
+  /** faster than kindAt: footprints painted in order over BLOCKED (later wins) */
+  kinds?: { footprint: MultiPolygon; kind: number }[];
+  /** faster than elevAt: triangulated surfaces painted in order (later wins) */
+  surfaces?: GroundSurface[];
 }
 export interface CostParams { maxGrade: number; roadWidth: number; usableWidth: number }
 
@@ -32,7 +43,8 @@ const BORDER_BAND = 40;   // m beside a border where running parallel costs
 const EDGE_SCALE = 125;   // m: about half a district; cost rises gently towards its edges
 // Cost on a district border. At 0.5 roads traced every jag of the (Voronoi) borders.
 const CORRIDOR = 0.75;
-const ROAD_REACH = 160;   // m: how far a placed road's influence is recorded (≥ max usable width)
+const ROAD_REACH = 160;
+const RIVER_REACH = 100;  // m: river cells are never farther than this from a bank   // m: how far a placed road's influence is recorded (≥ max usable width)
 
 export const cellOf = (g: Grid, x: number, z: number) => {
   const i = Math.min(g.w - 1, Math.max(0, Math.floor((x - g.minX) / g.cell)));
@@ -42,10 +54,48 @@ export const cellOf = (g: Grid, x: number, z: number) => {
 export const centreOf = (g: Grid, c: number): Point2 => [g.minX + ((c % g.w) + 0.5) * g.cell, g.minZ + (Math.floor(c / g.w) + 0.5) * g.cell];
 
 type Seg = [number, number, number, number];
-const segsOf = (mp: MultiPolygon): Seg[] => mp.flatMap(poly => poly.flatMap(ring => ring.map((p, i) => {
+const segsOf = (mp: MultiPolygon, skip?: (a: Point2, b: Point2) => boolean): Seg[] => mp.flatMap(poly => poly.flatMap(ring => ring.flatMap((p, i) => {
   const q = ring[(i + 1) % ring.length];
-  return [p[0], p[1], q[0], q[1]] as Seg;
+  return skip?.(p, q) ? [] : [[p[0], p[1], q[0], q[1]] as Seg];
 })));
+
+/** Call fn for every cell whose centre is inside the footprint (even-odd, so holes stay out). */
+function eachCellIn(g: Grid, mp: MultiPolygon, fn: (c: number) => void) {
+  const rings = mp.flat();
+  let zMin = Infinity, zMax = -Infinity;
+  for (const r of rings) for (const p of r) { zMin = Math.min(zMin, p[1]); zMax = Math.max(zMax, p[1]); }
+  const j0 = Math.max(0, Math.floor((zMin - g.minZ) / g.cell - 0.5)), j1 = Math.min(g.h - 1, Math.ceil((zMax - g.minZ) / g.cell));
+  for (let j = j0; j <= j1; j++) {
+    const z = g.minZ + (j + 0.5) * g.cell;
+    const xs: number[] = [];
+    for (const r of rings) for (let i = 0, k = r.length - 1; i < r.length; k = i++) {
+      const [ax, az] = r[k], [bx, bz] = r[i];
+      if ((az > z) !== (bz > z)) xs.push(ax + ((z - az) / (bz - az)) * (bx - ax));
+    }
+    xs.sort((a, b) => a - b);
+    for (let t = 0; t + 1 < xs.length; t += 2) {
+      const i0 = Math.max(0, Math.ceil((xs[t] - g.minX) / g.cell - 0.5)), i1 = Math.min(g.w - 1, Math.ceil((xs[t + 1] - g.minX) / g.cell - 0.5) - 1);
+      for (let i = i0; i <= i1; i++) fn(j * g.w + i);
+    }
+  }
+}
+
+/** Write each surface's elevation at the cell centres its triangles cover. */
+function paintSurface(g: Grid, s: GroundSurface) {
+  for (const [ia, ib, ic] of s.triangles) {
+    const [ax, az, ay] = s.points[ia], [bx, bz, by] = s.points[ib], [cx, cz, cy] = s.points[ic];
+    const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+    if (Math.abs(d) < 1e-12) continue;
+    const i0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - g.minX) / g.cell - 0.5)), i1 = Math.min(g.w - 1, Math.ceil((Math.max(ax, bx, cx) - g.minX) / g.cell));
+    const j0 = Math.max(0, Math.floor((Math.min(az, bz, cz) - g.minZ) / g.cell - 0.5)), j1 = Math.min(g.h - 1, Math.ceil((Math.max(az, bz, cz) - g.minZ) / g.cell));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = g.minX + (i + 0.5) * g.cell, z = g.minZ + (j + 0.5) * g.cell;
+      const u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d, v = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+      if (u < -1e-9 || v < -1e-9 || u + v > 1 + 1e-9) continue;
+      g.elev[j * g.w + i] = u * ay + v * by + (1 - u - v) * cy;
+    }
+  }
+}
 
 /** For every cell within `reach` of a segment: the distance to the nearest, and its normal. */
 function nearest(g: Grid, segs: Seg[], reach: number, dist: Float32Array, normal: Float32Array, only?: (c: number) => boolean) {
@@ -75,17 +125,23 @@ export function buildGrid(inp: GridInput, cell: number): Grid {
     border: new Float32Array(n).fill(Infinity), borderNormal: new Float32Array(n),
     riverNormal: new Float32Array(n),
     road: new Float32Array(n).fill(Infinity), roadNormal: new Float32Array(n),
+    bank: new Float32Array(n).fill(Infinity), bankNormal: new Float32Array(n),
   };
-  for (let c = 0; c < n; c++) {
-    const [x, z] = centreOf(g, c);
-    g.elev[c] = inp.elevAt(x, z);
-    g.kind[c] = inp.kindAt(x, z);
-  }
-  nearest(g, inp.districts.flatMap(segsOf), BORDER_BAND + EDGE_SCALE, g.border, g.borderNormal);
+  if (inp.kinds) {
+    g.kind.fill(BLOCKED);
+    for (const { footprint, kind } of inp.kinds) eachCellIn(g, footprint, c => { g.kind[c] = kind; });
+  } else for (let c = 0; c < n; c++) { const [x, z] = centreOf(g, c); g.kind[c] = inp.kindAt(x, z); }
+  if (inp.surfaces) {
+    g.elev.fill(NaN);
+    for (const sf of inp.surfaces) paintSurface(g, sf);
+    for (let c = 0; c < n; c++) if (Number.isNaN(g.elev[c])) { const [x, z] = centreOf(g, c); g.elev[c] = inp.elevAt(x, z); }
+  } else for (let c = 0; c < n; c++) { const [x, z] = centreOf(g, c); g.elev[c] = inp.elevAt(x, z); }
+  nearest(g, inp.districts.flatMap(d => segsOf(d, inp.skipSegment)), BORDER_BAND + EDGE_SCALE, g.border, g.borderNormal);
   if (inp.river) {
     const scratch = new Float32Array(n).fill(Infinity);
-    nearest(g, segsOf(inp.river), size, scratch, g.riverNormal, c => g.kind[c] === RIVER);
+    nearest(g, segsOf(inp.river), RIVER_REACH, scratch, g.riverNormal, c => g.kind[c] === RIVER);
   }
+  if (inp.water) nearest(g, segsOf(inp.water, inp.skipSegment), BORDER_BAND, g.bank, g.bankNormal, c => g.kind[c] === LAND || g.kind[c] === HILLS);
   return g;
 }
 
@@ -111,5 +167,7 @@ export function stepCost(g: Grid, a: number, b: number, heading: number, p: Cost
   const edgeF = 1 + 0.3 * Math.max(0, Math.min(1, 1 - d / EDGE_SCALE));
   const r = g.road[b];
   const roadF = r > p.roadWidth / 2 && r < p.usableWidth ? 1 + 3 * (1 - across(heading, g.roadNormal[b])) : 1;
-  return len * base * gradeF * borderF * edgeF * roadF;
+  // Beside water, running along the bank costs (a band there spills over the water).
+  const bankF = g.bank[b] < p.roadWidth / 2 + 10 ? 1 + 3 * (1 - across(heading, g.bankNormal[b])) : 1;
+  return len * base * gradeF * borderF * edgeF * roadF * bankF;
 }

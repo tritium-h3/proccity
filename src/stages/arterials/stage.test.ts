@@ -88,7 +88,7 @@ describe('arterials stage', () => {
       for (let i = 0; i < roads.length; i++) for (let j = i + 1; j < roads.length; j++) if (area(intersect(bands[i], bands[j])) > 1) parent[find(i)] = find(j);
       expect(new Set(roads.map((_, i) => find(i))).size, `seed ${seed}`).toBe(1);
       const all = union(bands.flat(), []);
-      const untouched = districtsOf(tree).filter(d => area(intersect(d.geometry.footprint, all)) <= 1).length;
+      const untouched = districtsOf(tree).filter(d => d.attrs.type !== 'undeveloped' && area(intersect(d.geometry.footprint, all)) <= 1).length;
       expect(untouched, `seed ${seed}`).toBeLessThanOrEqual(stats.unreachable);
     }
   });
@@ -151,6 +151,46 @@ describe('arterials stage', () => {
     const steep = { relief: 300, hilliness: 0.8 };
     expect(over12(run({ maxGrade: 4 }, 1, steep))).toBeLessThanOrEqual(over12(run({ maxGrade: 12 }, 1, steep)) + 50);
   });
+
+  it('leaves the site square-on and keeps off the site edge', () => {
+    for (const seed of [1, 2]) {
+      const { tree, roads } = run({}, seed);
+      const b = bounds(tree.geometry.footprint);
+      const edgeDist = (p: Point2) => Math.min(p[0] - b.minX, b.maxX - p[0], p[1] - b.minZ, b.maxZ - p[1]);
+      for (const e of roads.filter(r => r.exit)) {
+        const [a, c] = [e.points[0], samples(e.points).find(p => Math.hypot(p[0] - e.points[0][0], p[1] - e.points[0][1]) >= 30)!];
+        const inward = edgeDist(c) - edgeDist(a);
+        expect(inward / Math.hypot(c[0] - a[0], c[1] - a[1]), `seed ${seed} ${e.id}`).toBeGreaterThan(Math.cos(10 * Math.PI / 180));
+      }
+      let near = 0, total = 0;
+      for (const r of roads.filter(rr => !rr.exit)) for (const p of samples(r.points)) { total++; if (edgeDist(p) < 15) near++; }
+      expect(near / total, `seed ${seed}`).toBeLessThan(0.02);
+    }
+  });
+
+  it('only makes bridges where roads cross the river', () => {
+    for (const seed of [1, 4]) {
+      const { tree, out, roads } = run({}, seed);
+      const river = tree.children.find(c => c.kind === 'river')!;
+      const bridges = (out.children.get(river.id) ?? []).filter(k => k.kind === 'bridge');
+      let crossings = 0;
+      for (const r of roads) {
+        let was = false;
+        for (const p of samples(r.points, 2)) { const wet = containsPoint(river.geometry.footprint, p); if (wet && !was) crossings++; was = wet; }
+      }
+      expect(bridges.length, `seed ${seed}`).toBeLessThanOrEqual(crossings);
+      for (const br of bridges) expect(area(br.geometry.footprint), `seed ${seed} ${br.id}`).toBeGreaterThan(100);
+    }
+  });
+
+  it('handles a 5 km site in reasonable time', () => {
+    const site = createSite(5000);
+    const ts = defaultsFor(terrain.settings) as Settings;
+    let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(3), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
+    tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: defaultsFor(districts.settings) as Settings, rng: createRng(22), attr: () => undefined, overridesForStage: [] }).children);
+    const out = arterials.run({ tree, leaves: leaves(tree), settings: defaultsFor(arterials.settings) as Settings, rng: createRng(44), attr: () => undefined, overridesForStage: [] });
+    expect(out.data!.get('site')!.stats!.ms).toBeLessThan(6000);
+  }, 120_000);
 
   it('is deterministic and quick', () => {
     const a = run({}, 2), b = run({}, 2);

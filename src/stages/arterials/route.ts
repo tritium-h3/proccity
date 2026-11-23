@@ -20,6 +20,8 @@ export interface RouteOpts {
   turnPenalty?: number;
   /** the heading (rad) the route must leave in, e.g. into the site from an exit */
   startHeading?: number;
+  /** cells to go straight along startHeading before routing freely (exits leave square-on) */
+  straightStart?: number;
   goal: { cell: number } | { touches: (cell: number) => boolean };
   /** for a `touches` goal: a point to aim at (guides the search; the goal still decides) */
   toward?: Point2;
@@ -68,12 +70,34 @@ const nearestHeading = (rad: number) => {
   return best;
 };
 
+// Search buffers, reused between calls (a fresh 12 MB per route was a real cost at 5 km). A
+// state's cost is valid only when its stamp matches the current search.
+let buf: { n: number; cost: Float64Array; prev: Int32Array; stamp: Uint32Array; gen: number } | null = null;
+
 export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null {
+  if (opts.straightStart && opts.startHeading !== undefined) {
+    // Walk the straight stub, then route on from its end.
+    const k = nearestHeading(opts.startHeading);
+    const [dx, dz] = MOVES[k];
+    let c = Math.min(g.w - 1, Math.max(0, Math.floor((start[0] - g.minX) / g.cell))) + g.w * Math.min(g.h - 1, Math.max(0, Math.floor((start[1] - g.minZ) / g.cell)));
+    const stub: Point2[] = [centreOf(g, c)];
+    for (let i = 0; i < opts.straightStart; i++) {
+      const ni = (c % g.w) + dx, nj = Math.floor(c / g.w) + dz;
+      if (ni < 0 || nj < 0 || ni >= g.w || nj >= g.h || g.kind[nj * g.w + ni] === BLOCKED) break;
+      c = nj * g.w + ni;
+      stub.push(centreOf(g, c));
+    }
+    const rest = route(g, stub[stub.length - 1], { ...opts, straightStart: 0 });
+    return rest ? [...stub.slice(0, -1), ...rest] : null;
+  }
   const { params } = opts;
   const turn = opts.turnPenalty ?? 0.4;
   const n = g.w * g.h;
-  const cost = new Float64Array(n * H).fill(Infinity);
-  const prev = new Int32Array(n * H).fill(-1);
+  if (!buf || buf.n !== n) buf = { n, cost: new Float64Array(n * H), prev: new Int32Array(n * H), stamp: new Uint32Array(n * H), gen: 0 };
+  const b = buf;
+  b.gen++;
+  const costOf = (st: number) => (b.stamp[st] === b.gen ? b.cost[st] : Infinity);
+  const set = (st: number, v: number, from: number) => { b.cost[st] = v; b.prev[st] = from; b.stamp[st] = b.gen; };
   const heap = new Heap();
   const s = (() => { const i = Math.min(g.w - 1, Math.max(0, Math.floor((start[0] - g.minX) / g.cell))), j = Math.min(g.h - 1, Math.max(0, Math.floor((start[1] - g.minZ) / g.cell))); return j * g.w + i; })();
   const goalCell = 'cell' in opts.goal ? opts.goal.cell : -1;
@@ -81,14 +105,14 @@ export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null 
   const aim = goalCell >= 0 ? centreOf(g, goalCell) : opts.toward ?? null;
   const h = (c: number) => { if (!aim) return 0; const [x, z] = centreOf(g, c); return 0.5 * Math.hypot(aim[0] - x, aim[1] - z); };
   const heads = opts.startHeading !== undefined ? [nearestHeading(opts.startHeading)] : [...Array(H).keys()];
-  for (const k of heads) { cost[s * H + k] = 0; heap.push(h(s), s * H + k); }
+  for (const k of heads) { set(s * H + k, 0, -1); heap.push(h(s), s * H + k); }
 
   let end = -1;
   while (heap.size) {
     const st = heap.pop();
     const c = Math.floor(st / H), k = st % H;
     if (c === goalCell || (touches && c !== s && touches(c))) { end = st; break; }
-    const base = cost[st];
+    const base = costOf(st);
     const ci = c % g.w, cj = Math.floor(c / g.w);
     for (let dk = -MAX_TURN; dk <= MAX_TURN; dk++) {
       const nk = (k + dk + H) % H;
@@ -107,7 +131,7 @@ export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null 
       const len = Math.hypot(dx, dz) * g.cell;
       const nextCost = base + step + turn * len * Math.abs(dk);
       const ns = nc * H + nk;
-      if (nextCost < cost[ns]) { cost[ns] = nextCost; prev[ns] = st; heap.push(nextCost + h(nc), ns); }
+      if (nextCost < costOf(ns)) { set(ns, nextCost, st); heap.push(nextCost + h(nc), ns); }
     }
   }
   if (end < 0) return null;
@@ -115,7 +139,7 @@ export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null 
   // Walk back, keeping only cells where the heading changes (and the ends).
   const cells: number[] = [];
   const headings: number[] = [];
-  for (let st = end; st >= 0; st = prev[st]) { cells.push(Math.floor(st / H)); headings.push(st % H); }
+  for (let st = end; st >= 0; st = b.prev[st]) { cells.push(Math.floor(st / H)); headings.push(st % H); }
   cells.reverse(); headings.reverse();
   const out: Point2[] = [centreOf(g, cells[0])];
   for (let i = 1; i < cells.length - 1; i++) if (headings[i + 1] !== headings[i]) out.push(centreOf(g, cells[i]));
