@@ -31,6 +31,11 @@ export interface RouteOpts {
   maxTurn?: number;
   /** give up once the cheapest open route costs more than this */
   maxCost?: number;
+  /** for a `cell` goal: arrive heading this way (within maxTurn sectors), e.g. square into a
+   *  gateway's stub; arriving any way made a sharp turn onto the stub */
+  goalHeading?: number;
+  /** cells a route may enter (e.g. one district and its edge); others are skipped */
+  allow?(cell: number): boolean;
 }
 
 /** Binary min-heap of [priority, state]. */
@@ -114,12 +119,14 @@ export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null 
   for (const k of heads) { set(s * H + k, 0, -1); heap.push(h(s), s * H + k); }
 
   const maxTurn = opts.maxTurn ?? MAX_TURN, maxCost = opts.maxCost ?? Infinity;
+  const goalK = opts.goalHeading === undefined ? -1 : nearestHeading(opts.goalHeading);
+  const headingOk = (k: number) => goalK < 0 || Math.min((k - goalK + H) % H, (goalK - k + H) % H) <= maxTurn;
   let end = -1;
   while (heap.size) {
     const st = heap.pop();
     if (costOf(st) > maxCost) break;
     const c = Math.floor(st / H), k = st % H;
-    if (c === goalCell || (touches && c !== s && touches(c))) { end = st; break; }
+    if ((c === goalCell && headingOk(k)) || (touches && c !== s && touches(c))) { end = st; break; }
     const base = costOf(st);
     const ci = c % g.w, cj = Math.floor(c / g.w);
     for (let dk = -maxTurn; dk <= maxTurn; dk++) {
@@ -134,6 +141,7 @@ export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null 
         if (g.kind[a] === BLOCKED || g.kind[b] === BLOCKED) continue;
       }
       const nc = nj * g.w + ni;
+      if (opts.allow && !opts.allow(nc)) continue;
       const step = stepCost(g, c, nc, ANGLE[nk], params);
       if (!Number.isFinite(step)) continue;
       const len = Math.hypot(dx, dz) * g.cell;

@@ -10,12 +10,13 @@ import { childId } from '../../doc/tree.js';
 import { groundHeightAt } from '../../doc/ground.js';
 import type { MultiPolygon, Point2, RegionNode, Settings } from '../../doc/types.js';
 import { difference, intersect, offsetPolyline, union } from '../../grammar/clipper.js';
-import { area, bounds, centroid, containsPoint } from '../../grammar/polygon.js';
+import { area, bounds, centroid, containsPoint, simplifyLine } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
 import type { Stage } from '../types.js';
 import { BLOCKED, buildGrid, cellOf, centreOf, HILLS, isUsable, LAND, markRoad, RIVER, stepCost, WILD, type CostParams } from './grid.js';
-import { placeExits, poissonHubs } from './hubs.js';
-import { buildMesh } from './mesh.js';
+import { placeOnBorder, sharedBorder } from './gateways.js';
+import { pairGateways } from './inside.js';
+import { chooseLinks, type LinkCand } from './links.js';
 import { route } from './route.js';
 import { smoothRoad, tightBends } from './smooth.js';
 import { slivers } from './space.js';
@@ -23,20 +24,32 @@ import { slivers } from './space.js';
 // Distances scale with the city: the routing grid is spacing/35 (20 m at the old 700 m), but at
 // most ~300 cells across; other distances are in cells, spacing or district widths.
 const CELLS_PER_SPACING = 35, MAX_GRID = 300;
-const NUDGE = 3;            // cells: centres move this far to flatter ground
-const MAX_LINK = 1.8;       // × spacing: longest mesh link
-const BLOCKED_SHARE = 0.3;  // a link mostly over sea or pond isn't a candidate
-const EXIT_STUB = 2;        // cells an exit runs straight in from the edge
 const WATER = new Set(['sea', 'river', 'pond']);
+// Links touching Undeveloped land cost this much more: a road there only passes through.
+const WILD_LINK = 3;
 
-interface Road { id: string; points: Point2[]; exit: boolean; required: boolean }
+interface Road { id: string; points: Point2[]; exit: boolean; required: boolean; how: 'through' | 'border' | 'direct' | 'tee' | 'star' | 'bridge' | 'connector' }
+
+/** Metres along a polyline to its point nearest p. */
+function perimOn(line: Point2[], p: Point2): number {
+  let run = 0, best = 0, bd = Infinity;
+  for (let i = 0; i + 1 < line.length; i++) {
+    const a = line[i], b = line[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+    const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (L * L))) : 0;
+    const d = Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz);
+    if (d < bd) { bd = d; best = run + t * L; }
+    run += L;
+  }
+  return best;
+}
 
 export const arterials: Stage = {
   id: 'arterials',
   title: 'Arterials',
   settings: [
-    { key: 'spacing', label: 'Arterial spacing', type: 'number', min: 1000, max: 5000, step: 100, default: 2000, unit: 'm', help: 'Distance between hubs, and so between arterials' },
-    { key: 'redundancy', label: 'Redundancy', type: 'number', min: 0, max: 1, step: 0.05, default: 0.3, help: 'Extra loop links beyond what reaching everywhere needs' },
+    { key: 'spacing', label: 'Gateway spacing', type: 'number', min: 500, max: 5000, step: 100, default: 2000, unit: 'm', help: 'The closest two gateways (where arterials cross a district border) may be' },
+    { key: 'redundancy', label: 'Redundancy', type: 'number', min: 0, max: 1, step: 0.05, default: 0.3, help: 'Share of the remaining district links added as loops' },
+    { key: 'borderRoads', label: 'Border roads', type: 'number', min: 0, max: 1, step: 0.05, default: 0.3, help: 'Share of neighbouring gateways joined along the district border rather than across it' },
     { key: 'exits', label: 'Exits', type: 'number', min: 1, max: 8, step: 1, default: 3, help: 'Arterials leading off the site' },
     { key: 'roadWidth', label: 'Road width', type: 'number', min: 15, max: 40, step: 1, default: 25, unit: 'm', help: 'Including verges' },
     { key: 'junctionAngle', label: 'Junction angle', type: 'number', min: 30, max: 90, step: 5, default: 60, unit: '°', help: 'The sharpest angle two arterials may meet at' },
@@ -47,7 +60,7 @@ export const arterials: Stage = {
 
   run({ tree, leaves, settings, rng }) {
     const t0 = performance.now();
-    const s = settings as Settings & { spacing: number; redundancy: number; exits: number; roadWidth: number; junctionAngle: number; curveRadius: number; maxGrade: number; usableWidth: number };
+    const s = settings as Settings & { spacing: number; redundancy: number; borderRoads: number; exits: number; roadWidth: number; junctionAngle: number; curveRadius: number; maxGrade: number; usableWidth: number };
     const children = new Map<string, RegionNode[]>();
     const dists = leaves.filter(n => n.kind === 'district');
     if (!dists.length) return { children };
@@ -125,54 +138,187 @@ export const arterials: Stage = {
       }
       return m;
     };
-    const nudge = (p: Point2): Point2 => {
-      let best = -1, bs = Infinity;
-      const c0 = cellOf(g, p[0], p[1]), r = NUDGE;
-      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
-        const i = (c0 % g.w) + di, j = Math.floor(c0 / g.w) + dj;
-        if (i < 0 || j < 0 || i >= g.w || j >= g.h) continue;
-        const c = j * g.w + i;
-        if (!usable(c)) continue;
-        // Flattest, but clear of water and Undeveloped land where that's possible.
-        const score = gradeAt(c) + Math.hypot(di, dj) * 0.001 + (clear(c) ? 0 : 1e3);
-        if (score < bs) { bs = score; best = c; }
-      }
-      return best >= 0 ? centreOf(g, best) : p;
-    };
-
-    // 2. Hubs: the town centres, then spaced points on usable, not-too-steep ground.
-    // Sampled hubs only on developed land, clear of water and of Undeveloped land: a hub there
-    // that the mesh leaves as a leaf is a dead end at the shore or in the wilds.
-    // Hubs keep away from the site edge, or links between them ran along it.
-    const margin = (s.spacing * 3) / 14; // 150 m at the old 700 m spacing
-    // Town centres too keep inside the edge margin (one on the edge sent roads along it).
-    const inset = (p: Point2): Point2 => [Math.min(sb.maxX - margin, Math.max(sb.minX + margin, p[0])), Math.min(sb.maxZ - margin, Math.max(sb.minZ + margin, p[1]))];
-    const fixed = dists.filter(d => d.attrs.anchor === 'main' || d.attrs.anchor === 'minor').map(d => nudge(inset(centroid(d.geometry.footprint))));
-        const hubs = poissonHubs(fixed, s.spacing, p => { const c = cellOf(g, p[0], p[1]); return containsPoint(tree.geometry.footprint, p) && edgeDist(p) >= margin && usable(c) && clear(c) && gradeAt(c) <= params.maxGrade; }, { minX: sb.minX, minZ: sb.minZ, size }, rng);
-
-    // 3. The mesh, with link costs estimated along the straight line.
     const estimate = (a: Point2, b: Point2) => {
       const len = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(len / g.cell));
       const heading = Math.atan2(b[1] - a[1], b[0] - a[0]);
-      let cost = 0, wet = 0;
+      let cost = 0;
       let prev = cellOf(g, a[0], a[1]);
       for (let k = 1; k <= n; k++) {
         const c = cellOf(g, a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n);
-        if (g.kind[c] === BLOCKED) wet++;
         const st = c === prev ? 0 : stepCost(g, prev, c, heading, params);
         cost += Number.isFinite(st) ? st : 1e4;
         prev = c;
       }
-      return { cost, wet: wet / n };
+      return cost;
     };
-    const est = new Map<string, { cost: number; wet: number }>();
-    const estOf = (a: number, b: number) => { const k = a < b ? `${a},${b}` : `${b},${a}`; if (!est.has(k)) est.set(k, estimate(hubs[a], hubs[b])); return est.get(k)!; };
-    const mesh = buildMesh(hubs, (a, b) => estOf(a, b).cost, {
-      redundancy: s.redundancy, minAngle: (s.junctionAngle * Math.PI) / 180, maxLen: MAX_LINK * s.spacing,
-      blocked: (a, b) => estOf(a, b).wet > BLOCKED_SHARE,
+    const lineLength = (l: Point2[]) => l.slice(1).reduce((t, q, i) => t + Math.hypot(q[0] - l[i][0], q[1] - l[i][1]), 0);
+    const pointAlong = (l: Point2[], at: number): Point2 => {
+      let run = 0;
+      for (let i = 0; i + 1 < l.length; i++) {
+        const seg = Math.hypot(l[i + 1][0] - l[i][0], l[i + 1][1] - l[i][1]);
+        if (run + seg >= at && seg > 0) { const t = (at - run) / seg; return [l[i][0] + (l[i + 1][0] - l[i][0]) * t, l[i][1] + (l[i + 1][1] - l[i][1]) * t]; }
+        run += seg;
+      }
+      return l[l.length - 1];
+    };
+
+    // 2. The district graph (design: 2026-11-23-arterial-gateways-design.md).
+    const n = dists.length;
+    const developed = dists.map(d => d.attrs.type !== 'undeveloped');
+    const boxes = dists.map(d => bounds(d.geometry.footprint));
+    // Each district's own cells (centre inside), plus a margin of the Usable width (at least a
+    // cell) its roads may stray into: confined to the district itself, routes couldn't follow
+    // the contours (on hilly ground they were barely gentler than straight lines).
+    const reach = Math.max(1, Math.round(s.usableWidth / cellM));
+    const masks = dists.map((d, k) => {
+      const b = boxes[k], own = new Set<number>(), out = new Set<number>();
+      const i0 = Math.max(0, Math.floor((b.minX - g.minX) / g.cell)), i1 = Math.min(g.w - 1, Math.floor((b.maxX - g.minX) / g.cell));
+      const j0 = Math.max(0, Math.floor((b.minZ - g.minZ) / g.cell)), j1 = Math.min(g.h - 1, Math.floor((b.maxZ - g.minZ) / g.cell));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (containsPoint(d.geometry.footprint, centreOf(g, j * g.w + i))) own.add(j * g.w + i);
+      for (const c of own) for (let dj = -reach; dj <= reach; dj++) for (let di = -reach; di <= reach; di++) {
+        const i = (c % g.w) + di, j = Math.floor(c / g.w) + dj;
+        if (i >= 0 && j >= 0 && i < g.w && j < g.h) out.add(j * g.w + i);
+      }
+      return { own, out };
+    });
+    // A district's centre: its usable cell nearest the centroid (a concave district's centroid
+    // can be outside it), clear of water and the wilds where possible.
+    const centres = dists.map((d, k) => {
+      const c0 = centroid(d.geometry.footprint);
+      let best = -1, bd = Infinity;
+      for (const c of masks[k].own) {
+        if (!usable(c)) continue;
+        const [x, z] = centreOf(g, c);
+        const dd = Math.hypot(x - c0[0], z - c0[1]) + (clear(c) || !developed[k] ? 0 : 1e6);
+        if (dd < bd) { bd = dd; best = c; }
+      }
+      return best >= 0 ? centreOf(g, best) : c0;
+    });
+    const minBorder = 2 * s.usableWidth + s.roadWidth;
+    interface Cand extends LinkCand { line?: Point2[]; bridge?: [Point2, Point2] }
+    const cands: Cand[] = [];
+    // Border links: districts sharing a border long enough to hold a gateway.
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const a = boxes[i], b = boxes[j];
+      if (a.minX > b.maxX + 1 || b.minX > a.maxX + 1 || a.minZ > b.maxZ + 1 || b.minZ > a.maxZ + 1) continue;
+      const line = sharedBorder(dists[i].geometry.footprint, dists[j].geometry.footprint, 1)[0];
+      // A shorter border (down to four road widths) is a spare: only to give a district that
+      // would otherwise be a leaf its second link.
+      if (!line || lineLength(line) < 4 * s.roadWidth) continue;
+      const mid = pointAlong(line, lineLength(line) / 2);
+      cands.push({ a: i, b: j, kind: 'border', line, spare: lineLength(line) < minBorder, cost: estimate(centres[i], mid) + estimate(mid, centres[j]) });
+    }
+    // River links: districts facing each other across the river, joined by the shortest bridge
+    // between their banks that crosses only river.
+    if (river) {
+      const rfp = river.geometry.footprint;
+      const riverWidth = (2 * area(rfp)) / Math.max(1, rfp.flat().reduce((t, r) => t + lineLength([...r, r[0]]), 0));
+      const banks = dists.map(d => sharedBorder(d.geometry.footprint, rfp, 1).flatMap(l => {
+        const L = lineLength(l), out: Point2[] = [];
+        for (let t = s.usableWidth; t <= L - s.usableWidth; t += g.cell / 2) out.push(pointAlong(l, t));
+        return out;
+      }));
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        if (!banks[i].length || !banks[j].length) continue;
+        let best: [Point2, Point2] | null = null, bd = 4 * riverWidth;
+        for (const p of banks[i]) for (const q of banks[j]) {
+          const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+          if (d >= bd) continue;
+          // Only river between: three points along it are all in the river.
+          if (![0.25, 0.5, 0.75].every(t => containsPoint(rfp, [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]))) continue;
+          bd = d; best = [p, q];
+        }
+        if (best) cands.push({ a: i, b: j, kind: 'river', bridge: best, cost: estimate(centres[i], best[0]) + estimate(best[0], best[1]) + estimate(best[1], centres[j]) });
+      }
+    }
+    // A road through Undeveloped land is only for passing through: links touching it cost more
+    // (WILD_LINK), so the tree goes round where it reasonably can (at 1× a tenth of the network
+    // ran through the wilds).
+    for (const c of cands) if (!developed[c.a] || !developed[c.b]) c.cost *= WILD_LINK;
+    // Exit links: developed districts with enough land on the site edge.
+    const siteFp = tree.geometry.footprint;
+    for (let i = 0; i < n; i++) {
+      if (!developed[i]) continue;
+      const line = sharedBorder(dists[i].geometry.footprint, siteFp, 1).find(l => lineLength(l) >= minBorder);
+      if (!line) continue;
+      const mid = pointAlong(line, lineLength(line) / 2);
+      cands.push({ a: i, b: n, kind: 'exit', line, cost: estimate(centres[i], mid) });
+    }
+    // Exits spread along the boundary: the cheapest first, then each farthest (around the
+    // perimeter) from those already in the order.
+    const ring = siteFp[0][0], ringLen = lineLength([...ring, ring[0]]);
+    const perimPos = (p: Point2) => {
+      let run = 0, best = 0, bd = Infinity;
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i], b = ring[(i + 1) % ring.length], dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+        const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (L * L))) : 0;
+        const d = Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz);
+        if (d < bd) { bd = d; best = run + t * L; }
+        run += L;
+      }
+      return best;
+    };
+    const exitCands = cands.map((c, i) => i).filter(i => cands[i].kind === 'exit');
+    const exitPos = new Map(exitCands.map(i => [i, perimPos(pointAlong(cands[i].line!, lineLength(cands[i].line!) / 2))]));
+    const exitOrder: number[] = [];
+    {
+      const left = [...exitCands].sort((x, y) => cands[x].cost - cands[y].cost);
+      while (left.length) {
+        let pick = 0;
+        if (exitOrder.length) {
+          let far = -1;
+          left.forEach((c, k) => {
+            const d = Math.min(...exitOrder.map(o => { const dd = Math.abs(exitPos.get(c)! - exitPos.get(o)!); return Math.min(dd, ringLen - dd); }));
+            if (d > far) { far = d; pick = k; }
+          });
+        }
+        exitOrder.push(left.splice(pick, 1)[0]);
+      }
+    }
+
+    // 3. Links and their gateways. Gateways are placed as links are chosen (tree, exits, no-leaf
+    //    links, loops), each the spacing from its districts' other gateways where possible.
+    interface Gateway { at: Point2; cand: number; exit: boolean }
+    const gates: Gateway[][] = dists.map(() => []);
+    let crowded = 0;
+    const gradeAtP = (p: Point2) => gradeAt(cellOf(g, p[0], p[1]));
+    const links = chooseLinks(n, developed, cands, {
+      exits: s.exits, redundancy: s.redundancy, exitOrder,
+      place(ci, required) {
+        const c = cands[ci];
+        if (gates[c.a].some(x => x.cand === ci)) return true; // placed already
+        const on = c.b === n ? [c.a] : [c.a, c.b];
+        const avoid = on.flatMap(k => gates[k].map(x => x.at));
+        if (c.kind === 'river') {
+          const [p, q] = c.bridge!;
+          const tight = gates[c.a].some(x => Math.hypot(x.at[0] - p[0], x.at[1] - p[1]) < s.spacing) || gates[c.b].some(x => Math.hypot(x.at[0] - q[0], x.at[1] - q[1]) < s.spacing);
+          if (tight && !required) return false;
+          if (tight) crowded++;
+          gates[c.a].push({ at: p, cand: ci, exit: false });
+          gates[c.b].push({ at: q, cand: ci, exit: false });
+          return true;
+        }
+        // Exits also keep the spacing from each other, along the whole edge.
+        const others = c.kind === 'exit' ? gates.flat().filter(x => x.exit).map(x => x.at) : [];
+        const line = c.line!, L = lineLength(line);
+        const placed = placeOnBorder(line, {
+          margin: Math.min(s.usableWidth, (L - s.roadWidth) / 2), avoid: [...avoid, ...others], minGap: s.spacing, straight: 2 * s.roadWidth,
+          // Flat ground, and towards the border's middle.
+          score: p => gradeAtP(p) / params.maxGrade + Math.abs(perimOn(line, p) - L / 2) / L,
+        });
+        if (!placed || (placed.crowded && !required)) return false;
+        if (placed.crowded) crowded++;
+        for (const k of on) gates[k].push({ at: placed.at, cand: ci, exit: c.kind === 'exit' });
+        return true;
+      },
     });
 
-    // 4. Route the links: required ones first (cheapest first), then loops.
+    // Links dropped after placing (to avoid a district with one link) take their gateways along.
+    {
+      const kept = new Set(links.chosen);
+      for (let k = 0; k < n; k++) gates[k] = gates[k].filter(x => kept.has(x.cand));
+    }
+    // 4. Roads inside each district.
     const roads: Road[] = [];
     // A path runs through cell centres, so "on" a border it can be most of a cell beside it,
     // leaving a strip of district too thin to use. Points running along a border move onto it.
@@ -189,24 +335,283 @@ export const arterials: Stage = {
       });
       return out.filter((p, i) => i === 0 || Math.hypot(p[0] - out[i - 1][0], p[1] - out[i - 1][1]) > 1);
     };
-    // Ids from a counter, not roads.length: pruning removes roads, and a reused id made two
-    // roads' bridges and strips claim the same road.
+    // Ids from a counter, so they never repeat.
     let nextId = 0;
-    const lay = (raw: Point2[], exit: boolean, required: boolean, keep = 0) => {
-      const points = snap(raw, keep);
-      // The first `keep` points stay as they are (an exit's straight stub), the rest is smoothed.
-      const line = keep > 0 ? [...points.slice(0, keep), ...smoothRoad(points.slice(keep - 1), s.curveRadius, 0.6 * cellM).slice(1)] : smoothRoad(points, s.curveRadius, 0.6 * cellM);
-      roads.push({ id: `road:${nextId++}`, points: line, exit, required });
+    // `keep`: the road's first segment (and its last, for 'both') is a square stub out of a
+    // gateway and isn't smoothed: simplifying dropped the stub's end and the curve began at the
+    // border.
+    const lay = (raw0: Point2[], exit: boolean, required: boolean, how: Road['how'], smooth = true, keep: 'none' | 'start' | 'both' = 'none') => {
+      // An exit road runs from the site edge inward.
+      const flip = exit && edgeDist(raw0[raw0.length - 1]) < 1 && edgeDist(raw0[0]) >= 1;
+      const raw = flip ? [...raw0].reverse() : raw0;
+      const kept = flip ? (keep === 'start' ? 'end' : keep) : keep;
+      const head = (kept === 'start' || kept === 'both') && raw.length > 2 ? 1 : 0;
+      const tail = (kept === 'end' || kept === 'both') && raw.length > 2 + head ? 1 : 0;
+      const mid = raw.slice(head, raw.length - tail);
+      const points = smooth ? snap(mid, 0) : mid;
+      // Unsmoothed roads (border roads, bridges) still lose tiny jags (half a road width), which
+      // otherwise cap the curve radius at the corners.
+      const line = [...raw.slice(0, head), ...smoothRoad(points, s.curveRadius, smooth ? 0.6 * cellM : s.roadWidth / 2), ...raw.slice(raw.length - tail)];
+      roads.push({ id: `road:${nextId++}`, points: line, exit, required, how });
       markRoad(g, line);
     };
-    const ordered = [...mesh.links].sort((x, y) => Number(y.required) - Number(x.required) || estOf(x.a, x.b).cost - estOf(y.a, y.b).cost);
-    for (const l of ordered) {
-      const path = route(g, hubs[l.a], { params, maxTurn, goal: { cell: cellOf(g, hubs[l.b][0], hubs[l.b][1]) } });
-      if (path && path.length > 1) lay(path, false, l.required);
+    const meets = (p: Point2, r: Road) => r.points.some((a, i) => {
+      if (i + 1 >= r.points.length) return false;
+      const b = r.points[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz;
+      const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / L)) : 0;
+      return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz) < s.roadWidth;
+    });
+    const onRoad = (c: number) => g.road[c] <= Math.max(s.roadWidth / 2, 0.75 * g.cell);
+    // A route aimed at a road stops in a cell beside it: finish on the nearest point of a road.
+    const joinTo = (path: Point2[], rs: Road[]): Point2[] => {
+      const end = path[path.length - 1];
+      let best: Point2 | null = null, bd = Infinity;
+      for (const r of rs) for (let i = 0; i + 1 < r.points.length; i++) {
+        const a = r.points[i], b = r.points[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz;
+        const t = L ? Math.max(0, Math.min(1, ((end[0] - a[0]) * dx + (end[1] - a[1]) * dz) / L)) : 0;
+        const q: Point2 = [a[0] + t * dx, a[1] + t * dz], d = Math.hypot(end[0] - q[0], end[1] - q[1]);
+        if (d < bd) { bd = d; best = q; }
+      }
+      if (!best || bd <= 1 || bd >= 2 * g.cell) return path;
+      // The nearest road point can be behind the last cell: replace cells rather than double
+      // back (a hairpin at the junction).
+      const out = [...path];
+      const back = (q: Point2) => {
+        if (out.length < 2) return false;
+        const a = out[out.length - 2], b = out[out.length - 1];
+        return (b[0] - a[0]) * (q[0] - b[0]) + (b[1] - a[1]) * (q[1] - b[1]) < 0;
+      };
+      while (out.length > 2 && back(best)) out.pop();
+      return [...out, best];
+    };
+    // Bridges first: each joins its two bank gateways straight across.
+    for (const ci of links.chosen) {
+      const c = cands[ci];
+      if (c.kind === 'river') lay([c.bridge![0], c.bridge![1]], false, links.tree.has(ci), 'bridge', false);
+    }
+    const inwardOf = (k: number, at: Point2): Point2 => {
+      // Into district k, square to its border at `at`: the normal of the nearest boundary segment.
+      let best: Point2 = [0, 1], bd = Infinity;
+      for (const r of dists[k].geometry.footprint.flat()) for (let i = 0; i < r.length; i++) {
+        const a = r[i], b = r[(i + 1) % r.length], dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+        if (L < 1e-9) continue;
+        const t = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dz) / (L * L)));
+        const d = Math.hypot(at[0] - a[0] - t * dx, at[1] - a[1] - t * dz);
+        if (d < bd) { bd = d; best = [-dz / L, dx / L]; }
+      }
+      const probe = Math.min(g.cell, s.usableWidth) / 2;
+      return containsPoint(dists[k].geometry.footprint, [at[0] + best[0] * probe, at[1] + best[1] * probe]) ? best : [-best[0], -best[1]];
+    };
+    // A route that turns more than 270° all told has looped: cheaper, by the costs, than a tight
+    // turn beside a bank, but no road does that. The next, freer try is taken instead.
+    const loops = (p: Point2[]) => {
+      let net = 0;
+      for (let i = 1; i + 1 < p.length; i++) {
+        let d = Math.atan2(p[i + 1][1] - p[i][1], p[i + 1][0] - p[i][0]) - Math.atan2(p[i][1] - p[i - 1][1], p[i][0] - p[i - 1][0]);
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        net += d;
+        if (Math.abs(net) > 1.5 * Math.PI) return true;
+      }
+      return false;
+    };
+    // A single turn over 120° (a U-turn onto a stub, or into the gateway at the end).
+    const sharp = (p: Point2[]) => {
+      for (let i = 1; i + 1 < p.length; i++) {
+        const ux = p[i][0] - p[i - 1][0], uz = p[i][1] - p[i - 1][1], vx = p[i + 1][0] - p[i][0], vz = p[i + 1][1] - p[i][1];
+        const lu = Math.hypot(ux, uz), lv = Math.hypot(vx, vz);
+        if (lu > 1e-6 && lv > 1e-6 && (ux * vx + uz * vz) / (lu * lv) < -0.5) return true;
+      }
+      return false;
+    };
+    const STUB = 2.5; // cells a road runs square from a gateway before routing freely
+    let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0;
+    const cellsOf = (r: Road) => {
+      const out = new Set<number>();
+      for (let i = 0; i + 1 < r.points.length; i++) {
+        const [a, b] = [r.points[i], r.points[i + 1]];
+        const m = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / (g.cell / 2)));
+        for (let q = 0; q <= m; q++) out.add(cellOf(g, a[0] + (b[0] - a[0]) * q / m, a[1] + (b[1] - a[1]) * q / m));
+      }
+      return out;
+    };
+    // Each district's own roads, so its gateways can be checked for being joined up inside it.
+    const ownRoads: Road[][] = dists.map(() => []);
+    const lateTees: (() => void)[] = [];
+    for (let k = 0; k < n; k++) {
+      const gs = gates[k];
+      if (!gs.length) continue;
+      const first = roads.length;
+      const fp = dists[k].geometry.footprint;
+      const outer = fp[0][0];
+      const perimeter = lineLength([...outer, outer[0]]);
+      const gateInfo = gs.map(x => ({ at: x.at, perim: perimOn([...outer, outer[0]], x.at), inward: inwardOf(k, x.at) }));
+      const allow = (c: number) => masks[k].out.has(c);
+      const inside = (x: { at: Point2; inward: Point2 }): Point2 => [x.at[0] + x.inward[0] * STUB * g.cell, x.at[1] + x.inward[1] * STUB * g.cell];
+      const isExit = (i: number) => gs[i].exit;
+      // Route from gateway i: square out of the border for a stub when the goal is well ahead,
+      // else free (a stub aimed away from a nearby goal made the road loop back on itself).
+      // Inside the district first; if that fails, anywhere.
+      // A goal of "any road" gets no guide point: aiming at the centre sent tees the long way round.
+      const routeBetween = (i: number, goal: { cell: number } | { touches: (c: number) => boolean }, aim?: Point2, guide = true, goalHeading?: number, finish?: Point2) => {
+        const x = gateInfo[i];
+        const ahead = aim ? (aim[0] - x.at[0]) * x.inward[0] + (aim[1] - x.at[1]) * x.inward[1] : Infinity;
+        const square = ahead > (STUB + 3) * g.cell || isExit(i);
+        // The square stub is laid exactly along the gateway's normal (the router's 16 headings
+        // were up to 13° off), and the route carries on from its end, heading the same way.
+        const stubEnd: Point2 = [x.at[0] + x.inward[0] * STUB * g.cell, x.at[1] + x.inward[1] * STUB * g.cell];
+        const tries: [Point2, Parameters<typeof route>[2]][] = [
+          ...(square && usable(cellOf(g, stubEnd[0], stubEnd[1])) ? [
+            [stubEnd, { params, maxTurn, allow, startHeading: Math.atan2(x.inward[1], x.inward[0]), goal, goalHeading, toward: guide ? aim : undefined }],
+            [stubEnd, { params, maxTurn, allow, startHeading: Math.atan2(x.inward[1], x.inward[0]), goal, toward: guide ? aim : undefined }],
+          ] as [Point2, Parameters<typeof route>[2]][] : []),
+          [x.at, { params, maxTurn, allow, goal, goalHeading, toward: guide ? aim : undefined }],
+          [x.at, { params, maxTurn, goal, goalHeading, toward: guide ? aim : undefined }],
+          // Last: the router's looser turn limit (two sectors a step), anywhere.
+          [x.at, { params, maxTurn: 2, goal, toward: guide ? aim : undefined }],
+        ];
+        for (const [from, t] of tries) {
+          const path = route(g, from, t);
+          if (!path || path.length < 2) continue;
+          // After a stub, skip route points not past its end (the route starts at its cell's
+          // centre, which can be behind it: a back-and-forth kink).
+          const past = (q: Point2) => (q[0] - stubEnd[0]) * x.inward[0] + (q[1] - stubEnd[1]) * x.inward[1] > 1;
+          const rest = path.slice(1);
+          // An exit always leaves square-on: even a route that didn't start from the stub gets it.
+          const stubbed = from !== x.at || (isExit(i) && usable(cellOf(g, stubEnd[0], stubEnd[1])));
+          while (stubbed && rest.length > 1 && !past(rest[0])) rest.shift();
+          const full: Point2[] = stubbed ? [x.at, stubEnd, ...rest] : [x.at, ...rest];
+          if (!loops(full) && !sharp(finish ? [...full, finish] : full)) return full;
+        }
+        return null;
+      };
+      // The border from gateway i forward (the ring's direction) to gateway j. Pairing joins
+      // perimeter neighbours (i then j), so this stretch holds no other gateway. The shorter way
+      // round could run past one, putting that gateway on the road.
+      const ringC = [...outer, outer[0]];
+      const vs: { at: number; p: Point2 }[] = [];
+      {
+        let run = 0;
+        for (let v = 0; v + 1 < ringC.length; v++) { vs.push({ at: run, p: ringC[v] }); run += Math.hypot(ringC[v + 1][0] - ringC[v][0], ringC[v + 1][1] - ringC[v][1]); }
+      }
+      const borderBetween = (i: number, j: number): Point2[] => {
+        const a = gateInfo[i].perim, b = gateInfo[j].perim;
+        const mid = a <= b ? vs.filter(v => v.at > a && v.at < b) : [...vs.filter(v => v.at > a), ...vs.filter(v => v.at < b)];
+        return [gateInfo[i].at, ...mid.map(v => v.p), gateInfo[j].at];
+      };
+      const eligible = (i: number, j: number) => {
+        if (!developed[k] || isExit(i) || isExit(j)) return false;
+        const line = borderBetween(i, j);
+        if (lineLength(line) > perimeter / 2) return false;
+        // Every corner (after the jags go) must take a curve of the Curve radius: a border road
+        // takes the district's corners as they come, and a corner its neighbouring stretches are
+        // too short for showed up as a tight curve. And never along water or the site edge.
+        const simple = simplifyLine(line, s.roadWidth / 2);
+        for (let v = 1; v + 1 < simple.length; v++) {
+          const [p0, p1, p2] = [simple[v - 1], simple[v], simple[v + 1]];
+          const l1 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]), l2 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+          let d = Math.abs(Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) - Math.atan2(p1[1] - p0[1], p1[0] - p0[0]));
+          if (d > Math.PI) d = 2 * Math.PI - d;
+          if (d > Math.PI - (s.junctionAngle * Math.PI) / 180 + 1e-6 || s.curveRadius * Math.tan(d / 2) > Math.min(l1, l2) / 2) return false;
+        }
+        for (let v = 0; v + 1 < line.length; v++) if (wetSide(line[v], line[v + 1]) || (onSiteEdge(line[v]) && onSiteEdge(line[v + 1]))) return false;
+        return true;
+      };
+      const star = developed[k] && (dists[k].attrs.anchor === 'main' || dists[k].attrs.anchor === 'minor');
+      const pr = pairGateways(gateInfo, centres[k], perimeter, { borderShare: developed[k] ? s.borderRoads : 0, eligible, rng, star });
+      const req = (i: number) => links.tree.has(gs[i].cand);
+      for (const [i, j] of pr.border) {
+        lay(borderBetween(i, j), false, req(i) || req(j), 'border', false);
+        borderRoads++;
+      }
+      for (const [i, j] of pr.through) {
+        const a = gateInfo[i].at, b = gateInfo[j].at, gap = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        // Gateways too close for two square stubs and a turn between them, or with no route that
+        // doesn't loop: join them directly, straight if that stays in the district, else along
+        // the border the shorter way round (never along water).
+        const direct = () => {
+          // Straight over land (it may clip a neighbouring district: it's short).
+          const steps = Math.max(2, Math.ceil(gap / (g.cell / 2)));
+          const straight = Array.from({ length: steps - 1 }, (_, q) => (q + 1) / steps).every(t => { const c = cellOf(g, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t); return usable(c); });
+          const fwd = borderBetween(i, j), back = borderBetween(j, i);
+          const line = straight ? [a, b] : lineLength(fwd) <= lineLength(back) ? fwd : back;
+          if (line.slice(1).some((q, v) => wetSide(line[v], q))) return false;
+          lay(line, isExit(i) || isExit(j), req(i) || req(j), 'direct', false);
+          directs++;
+          return true;
+        };
+        // Not first for an exit: it must leave the site square-on.
+        if (gap < (2 * STUB + 4) * g.cell && !isExit(i) && !isExit(j) && direct()) continue;
+        const target = inside(gateInfo[j]);
+        // Arrive heading into gateway j, so the stub into it carries straight on.
+        const path = routeBetween(i, { cell: cellOf(g, target[0], target[1]) }, target, true, Math.atan2(-gateInfo[j].inward[1], -gateInfo[j].inward[0]), gateInfo[j].at);
+        if (!path) {
+          if (!(gap < s.spacing && direct())) unreachable++;
+          continue;
+        }
+        // Finish along gateway j's exact stub: the route ends at the target cell's centre.
+        lay([...path.slice(0, -1), target, gateInfo[j].at], isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'both');
+        through++;
+      }
+      for (const i of pr.star) {
+        const path = routeBetween(i, { cell: cellOf(g, centres[k][0], centres[k][1]) }, centres[k]);
+        if (!path) { unreachable++; continue; }
+        lay(path, isExit(i), req(i), 'star', true, 'start');
+        stars++;
+      }
+      ownRoads[k].push(...roads.slice(first));
+      // Tees join a road in their district once every district's roads are down.
+      for (const i of pr.tees) lateTees.push(() => {
+        // A road already runs through this gateway (a border road past it): nothing to join.
+        // Not one that merely ends here: that's the neighbour's road, waiting for this one.
+        const at = gateInfo[i].at;
+        const endsHere = (r: Road) => [r.points[0], r.points[r.points.length - 1]].some(p => Math.hypot(p[0] - at[0], p[1] - at[1]) < 2 * s.roadWidth);
+        if (roads.some(r => meets(at, r) && !endsHere(r))) return;
+        // Not the road ending at this same gateway (the neighbour's): a tee joined it by looping
+        // round to a cell beside where it started.
+        const near = (c: number) => { const [cx, cz] = centreOf(g, c); return Math.hypot(cx - at[0], cz - at[1]) < 3 * g.cell; };
+        const path = routeBetween(i, { touches: c => onRoad(c) && masks[k].out.has(c) && !near(c) }, centres[k], false);
+        if (!path) { unreachable++; return; }
+        lay(joinTo(path, roads), isExit(i), req(i), 'tee', true, 'start');
+        ownRoads[k].push(roads[roads.length - 1]);
+        tees++;
+      });
+    }
+    for (const t of lateTees) t();
+    // Join up each district's roads: two through roads that don't cross leave its gateways in
+    // separate pieces, and the tree only links districts, so the network would split there.
+    let joins = 0;
+    for (let k = 0; k < n; k++) {
+      for (let guard = 0; guard < 6; guard++) {
+        const rs = ownRoads[k];
+        if (rs.length < 2) break;
+        const cells = rs.map(cellsOf);
+        const parent = rs.map((_, i) => i);
+        const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+        for (let a = 0; a < rs.length; a++) for (let b = a + 1; b < rs.length; b++) {
+          if ([...cells[a]].some(c => cells[b].has(c))) parent[find(a)] = find(b);
+        }
+        const groups = new Map<number, number[]>();
+        rs.forEach((_, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), i]));
+        if (groups.size <= 1) break;
+        const sorted = [...groups.values()].sort((x, y) => y.length - x.length || x[0] - y[0]);
+        const main = new Set(sorted[0].flatMap(i => [...cells[i]]));
+        const mainPts = sorted[0].flatMap(i => rs[i].points);
+        let start: Point2 | null = null, toward: Point2 | null = null, bd = Infinity;
+        for (const i of sorted[1]) for (const p of rs[i].points) for (const q of mainPts) {
+          const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+          if (d < bd) { bd = d; start = p; toward = q; }
+        }
+        const allow = (c: number) => masks[k].out.has(c);
+        const path = start && (route(g, start, { params, maxTurn, allow, goal: { touches: c => main.has(c) }, toward: toward! }) ?? route(g, start, { params, maxTurn, goal: { touches: c => main.has(c) }, toward: toward! }));
+        if (!path || path.length < 2) break;
+        lay(joinTo([start!, ...path.slice(1)], sorted[0].map(i => rs[i])), false, true, 'tee');
+        ownRoads[k].push(roads[roads.length - 1]);
+        joins++;
+      }
     }
 
-    // Bands and their bounds, computed once per road. Slivers and cuts in a district depend only
-    // on the bands overlapping it: unions of every band made pruning take seconds at 30 km.
+    // Bands and their bounds, computed once per road.
     const bandCache = new Map<Road, { band: MultiPolygon; box: ReturnType<typeof bounds> }>();
     const bandInfo = (r: Road) => {
       let b = bandCache.get(r);
@@ -218,52 +623,8 @@ export const arterials: Stage = {
     const near = (fp: MultiPolygon, rs: Road[]) => { const fb = bounds(fp); return rs.filter(r => overlaps(bandInfo(r).box, fb)); };
     const isThin = (fp: MultiPolygon) => slivers(fp, [], s.usableWidth).length > 0;
 
-    // 5. Loops that leave slivers go: a loop is removed only if that actually leaves fewer
-    //    slivers in some district it crosses (required roads' slivers aren't its fault).
-    {
-      const sliversWith = (fp: MultiPolygon, rs: Road[]) => slivers(fp, union(near(fp, rs).flatMap(bandOf), []), s.usableWidth).length;
-      for (const loop of roads.filter(r => !r.required)) {
-        const band = bandOf(loop), lb = bounds(band);
-        const crossed = dists.filter(d => {
-          const b = bounds(d.geometry.footprint);
-          return !(b.minX > lb.maxX || b.maxX < lb.minX || b.minZ > lb.maxZ || b.maxZ < lb.minZ) && !isThin(d.geometry.footprint) && area(intersect(d.geometry.footprint, band)) > 1;
-        });
-        const without = roads.filter(r => r !== loop);
-        if (crossed.some(d => sliversWith(d.geometry.footprint, without) < sliversWith(d.geometry.footprint, roads))) roads.splice(roads.indexOf(loop), 1);
-      }
-    }
-    // The grid's road field still holds removed loops; rebuild it from what's left.
-    g.road.fill(Infinity);
-    for (const r of roads) markRoad(g, r.points);
-    // Within three-quarters of a cell too: at 100 m cells half a road width (12.5 m) missed cells.
-    const onRoad = (c: number) => g.road[c] <= Math.max(s.roadWidth / 2, 0.75 * g.cell);
-
-    // A route aimed at a road stops in a cell beside it, up to most of a cell short (a visible
-    // gap at 100 m cells): finish on the nearest point of those roads.
-    const joinTo = (path: Point2[], rs: Road[]): Point2[] => {
-      const end = path[path.length - 1];
-      let best: Point2 | null = null, bd = Infinity;
-      for (const r of rs) for (let i = 0; i + 1 < r.points.length; i++) {
-        const a = r.points[i], b = r.points[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz;
-        const t = L ? Math.max(0, Math.min(1, ((end[0] - a[0]) * dx + (end[1] - a[1]) * dz) / L)) : 0;
-        const q: Point2 = [a[0] + t * dx, a[1] + t * dz], d = Math.hypot(end[0] - q[0], end[1] - q[1]);
-        if (d < bd) { bd = d; best = q; }
-      }
-      return best && bd > 1 && bd < 2 * g.cell ? [...path, best] : path;
-    };
-
-    // 5b. One network: the mesh can fall into pieces (hubs either side of a bay with no allowed
-    //     link), so join any stray piece to the main one with a connector.
+    // 5. One network: if a route failed somewhere, join any stray piece to the main one.
     let connectors = 0;
-    const cellsOf = (r: Road) => {
-      const out = new Set<number>();
-      for (let i = 0; i + 1 < r.points.length; i++) {
-        const [a, b] = [r.points[i], r.points[i + 1]];
-        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / (g.cell / 2)));
-        for (let k = 0; k <= n; k++) out.add(cellOf(g, a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n));
-      }
-      return out;
-    };
     for (let guard = 0; guard < 10 && roads.length > 1; guard++) {
       const owner = new Map<number, number>();
       const parent = roads.map((_, i) => i);
@@ -274,190 +635,22 @@ export const arterials: Stage = {
       if (groups.size <= 1) break;
       const sorted = [...groups.values()].sort((x, y) => y.length - x.length || x[0] - y[0]);
       const main = new Set(sorted[0].flatMap(i => [...cellsOf(roads[i])]));
-      const stray = sorted[1];
       const mainPts = sorted[0].flatMap(i => roads[i].points);
-      // From the stray piece's point nearest the main network.
       let start: Point2 | null = null, toward: Point2 | null = null, bd = Infinity;
-      for (const i of stray) for (const p of roads[i].points) for (const q of mainPts) {
+      for (const i of sorted[1]) for (const p of roads[i].points) for (const q of mainPts) {
         const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
         if (d < bd) { bd = d; start = p; toward = q; }
       }
       const path = start && route(g, start, { params, maxTurn, goal: { touches: c => main.has(c) }, toward: toward! });
       if (!path || path.length < 2) break;
-      lay(joinTo(path, sorted[0].map(i => roads[i])), false, true);
+      lay(joinTo(path, sorted[0].map(i => roads[i])), false, true, 'connector');
       connectors++;
     }
-
-    // 5c. A dead end goes when every developed district it reaches is reached by another road
-    //     (and the network stays in one piece): a leaf hub's road otherwise ran on to nowhere,
-    //     often a shore or the edge of the wilds. Any district this leaves untouched gets a spur.
-    let pruned = 0;
-    const developed = dists.filter(d => d.attrs.type !== 'undeveloped').map(d => ({ d, box: bounds(d.geometry.footprint) }));
-    const reachCache = new Map<Road, Set<RegionNode>>();
-    const reachOf = (r: Road) => {
-      let set = reachCache.get(r);
-      if (!set) {
-        const { band, box } = bandInfo(r);
-        set = new Set(developed.filter(x => overlaps(x.box, box) && area(intersect(x.d.geometry.footprint, band)) > 1).map(x => x.d));
-        reachCache.set(r, set);
-      }
-      return set;
-    };
-    const cellCache = new Map<Road, Set<number>>();
-    const cellsCached = (r: Road) => { let c = cellCache.get(r); if (!c) { c = cellsOf(r); cellCache.set(r, c); } return c; };
-    const meets = (p: Point2, r: Road) => r.points.some((a, i) => {
-      if (i + 1 >= r.points.length) return false;
-      const b = r.points[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz;
-      const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / L)) : 0;
-      return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz) < s.roadWidth;
-    });
-    const prune = () => {
-      const pieces = (rs: Road[]) => {
-        const owner = new Map<number, number>(), parent = rs.map((_, i) => i);
-        const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
-        rs.forEach((r, i) => { for (const c of cellsCached(r)) { const o = owner.get(c); if (o === undefined) owner.set(c, i); else parent[find(i)] = find(o); } });
-        return new Set(rs.map((_, i) => find(i))).size;
-      };
-      const dangling = (r: Road) => [r.points[0], r.points[r.points.length - 1]].some(p => !roads.some(o => o !== r && meets(p, o)));
-      const before = pruned;
-      for (let changed = true; changed;) {
-        changed = false;
-        let now = pieces(roads);
-        for (const r of [...roads]) {
-          if (r.exit || !dangling(r)) continue;
-          const others = roads.filter(o => o !== r);
-          if (![...reachOf(r)].every(d => others.some(o => reachOf(o).has(d)))) continue;
-          const after = pieces(others);
-          if (after > now) continue;
-          roads.splice(roads.indexOf(r), 1);
-          now = after;
-          pruned++;
-          changed = true;
-        }
-      }
-      if (pruned > before) { g.road.fill(Infinity); for (const r of roads) markRoad(g, r.points); }
-    };
-    prune();
-
-    // 6. Exits: dead ends from the site edge, inward, to the nearest arterial.
-    let exitCount = 0;
-    if (roads.length) {
-      const ring = tree.geometry.footprint[0][0];
-      const exits = placeExits(s.exits, ring, p => {
-        const inside: Point2 = [p[0], p[1]];
-        const c = cellOf(g, inside[0], inside[1]);
-        return usable(c) && !blocked.some(b => containsPoint(b, inside));
-      }, p => -gradeAt(cellOf(g, p[0], p[1])), rng, margin, 3 * cellM);
-      for (const e of exits) {
-        // Square-on: start at a cell centre just inside, put the exit point on the edge
-        // straight behind it, and go straight in for a couple of cells before turning.
-        const c0 = cellOf(g, e.at[0] + e.inward[0] * g.cell, e.at[1] + e.inward[1] * g.cell);
-        const start = centreOf(g, c0);
-        const back = (start[0] - e.at[0]) * e.inward[0] + (start[1] - e.at[1]) * e.inward[1];
-        const edge: Point2 = [start[0] - e.inward[0] * back, start[1] - e.inward[1] * back];
-        const path = route(g, start, { params, maxTurn, startHeading: Math.atan2(e.inward[1], e.inward[0]), straightStart: EXIT_STUB, goal: { touches: onRoad }, toward: centroid(tree.geometry.footprint) });
-        if (!path) continue;
-        lay(joinTo([edge, ...path], roads), true, true, EXIT_STUB + 2);
-        exitCount++;
-      }
-    }
-
-    // 7. Spurs to any district the network doesn't touch.
-    let spurs = 0, unreachable = 0;
-    if (roads.length) {
-      let all = union(roads.flatMap(bandOf), []);
-      for (const d of dists) {
-        // Undeveloped land needn't be reached by an arterial (the owner: "it's not important to
-        // connect undeveloped districts"); roads may still cross it.
-        if (d.attrs.type === 'undeveloped') continue;
-        const fp = d.geometry.footprint;
-        if (area(intersect(fp, all)) > 1) continue;
-        // Candidate cells, best first: cells whose centre is inside and clear of water and
-        // Undeveloped land; corner cells that are clear (a small district may hold no cell centre
-        // at all). Not corners on the site edge: a spur ending there ran along the edge.
-        const inside: number[] = [], corners: number[] = [];
-        for (const ring of fp.flat()) for (const p of ring) if (edgeDist(p) > g.cell) corners.push(cellOf(g, p[0], p[1]));
-        const fb = bounds(fp);
-        for (let j = Math.max(0, Math.floor((fb.minZ - g.minZ) / g.cell)); j < g.h && g.minZ + j * g.cell <= fb.maxZ; j++) {
-          for (let i = Math.max(0, Math.floor((fb.minX - g.minX) / g.cell)); i < g.w && g.minX + i * g.cell <= fb.maxX; i++) {
-            const c = j * g.w + i;
-            if (usable(c) && containsPoint(fp, centreOf(g, c))) inside.push(c);
-          }
-        }
-        let cands = [inside.filter(clear), corners.filter(c => usable(c) && clear(c))].find(cs => cs.length) ?? [];
-        if (!cands.length) {
-          // Nowhere clear (a district along a shore): its cells farthest from the water, out of
-          // Undeveloped land. Ending near the wilds is fine: the end is in the district it serves.
-          const tame = (cs: number[]) => cs.filter(c => usable(c) && g.wild[c] > g.cell);
-          const cs = [tame(inside), tame(corners), inside.filter(usable), corners.filter(usable)].find(x => x.length) ?? [];
-          const fromWater = (c: number) => (edgeDist(centreOf(g, c)) <= g.bank[c] + 1 ? Infinity : g.bank[c]);
-          const most = Math.max(0, ...cs.map(fromWater));
-          cands = cs.filter(c => fromWater(c) >= 0.9 * most);
-        }
-        if (!cands.length) { unreachable++; continue; }
-        // The spur starts in the district, at the candidate nearest its centre, and is routed out
-        // to whichever road is cheapest to reach. Routed the other way, from the road point
-        // nearest the centre, it crossed the river to districts just over it and hooked back to
-        // a corner at the end (hairpins, ends on the bank).
-        const target = centroid(fp);
-        const start = cands.reduce((a, c) => { const [ax, az] = centreOf(g, a), [cx, cz] = centreOf(g, c); return Math.hypot(cx - target[0], cz - target[1]) < Math.hypot(ax - target[0], az - target[1]) ? c : a; });
-        const path = route(g, centreOf(g, start), { params, maxTurn, goal: { touches: onRoad } });
-        if (!path || path.length < 2) { unreachable++; continue; }
-        lay(joinTo(path, roads), false, true);
-        spurs++;
-        all = union(all, bandOf(roads[roads.length - 1]));
-      }
-    }
-
-    // Again with exits and spurs in: one may reach what a dead end was kept for.
-    prune();
-
-    // 7b. Dead ends left: carry each on, the way it was heading, to another road within the
-    //     spacing (a loop, not a stub). Failing that, one near the site edge carries on off the
-    //     site; that's an extra way out, which beats a road stopping just short of the edge.
-    let closed = 0, extended = 0;
-    {
-      const pathLength = (p: Point2[]) => p.slice(1).reduce((t, q, i) => t + Math.hypot(q[0] - p[i][0], q[1] - p[i][1]), 0);
-      const isDangling = (r: Road, p: Point2) => !roads.some(o => o !== r && meets(p, o));
-      const ends: { r: Road; first: boolean }[] = [];
-      for (const r of roads) {
-        if (r.exit) continue;
-        if (isDangling(r, r.points[0])) ends.push({ r, first: true });
-        if (isDangling(r, r.points[r.points.length - 1])) ends.push({ r, first: false });
-      }
-      for (const { r, first } of ends) {
-        const pts = first ? [...r.points].reverse() : r.points;
-        const end = pts[pts.length - 1];
-        if (!isDangling(r, end)) continue; // an earlier closure reached it
-        const back = pts[Math.max(0, pts.length - 2)];
-        const heading = Math.atan2(end[1] - back[1], end[0] - back[0]);
-        // Not back onto its own road: its cells and their neighbours.
-        const own = new Set<number>();
-        for (const c of cellsOf(r)) for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
-          const i = (c % g.w) + di, j = Math.floor(c / g.w) + dj;
-          if (i >= 0 && j >= 0 && i < g.w && j < g.h) own.add(j * g.w + i);
-        }
-        const from = (p: Point2[]) => [end, ...p.slice(Math.hypot(p[0][0] - end[0], p[0][1] - end[1]) < 1 ? 1 : 0)];
-        const loop = route(g, end, { params, maxTurn, startHeading: heading, maxCost: 3 * s.spacing, goal: { touches: c => onRoad(c) && !own.has(c) } });
-        if (loop && loop.length > 1 && pathLength(loop) <= s.spacing) {
-          lay(joinTo(from(loop), roads.filter(o => o !== r)), false, true);
-          closed++;
-          continue;
-        }
-        if (edgeDist(end) >= s.spacing / 2) continue;
-        const out = route(g, end, { params, maxTurn, startHeading: heading, maxCost: 3 * s.spacing, goal: { touches: c => edgeDist(centreOf(g, c)) < g.cell } });
-        if (!out || out.length < 2) continue;
-        // Finish on the edge, straight out from the last cell.
-        const last = out[out.length - 1];
-        const onEdge: Point2 = [Math.min(sb.maxX, Math.max(sb.minX, last[0])), Math.min(sb.maxZ, Math.max(sb.minZ, last[1]))];
-        const dx = Math.min(last[0] - sb.minX, sb.maxX - last[0]), dz = Math.min(last[1] - sb.minZ, sb.maxZ - last[1]);
-        if (dx < dz) onEdge[0] = last[0] - sb.minX < sb.maxX - last[0] ? sb.minX : sb.maxX;
-        else onEdge[1] = last[1] - sb.minZ < sb.maxZ - last[1] ? sb.minZ : sb.maxZ;
-        // An exit runs from the edge inward.
-        lay([onEdge, ...from(out).reverse()], true, true);
-        extended++;
-      }
-      if (closed + extended) { g.road.fill(Infinity); for (const r of roads) markRoad(g, r.points); }
+    // Dead ends: road ends that meet no other road and aren't on the site edge. Expected 0.
+    let deadEnds = 0;
+    for (const r of roads) for (const p of [r.points[0], r.points[r.points.length - 1]]) {
+      if (edgeDist(p) < 1 || roads.some(o => o !== r && meets(p, o))) continue;
+      deadEnds++;
     }
 
     // 8. Cut the roads out of the districts and the river. Each road's piece is its band minus
@@ -524,9 +717,13 @@ export const arterials: Stage = {
       data: new Map([[tree.id, {
         roads: roads.map(r => ({ id: r.id, points: r.points, exit: r.exit })),
         stats: {
-          hubs: hubs.length, candidates: mesh.candidates, links: mesh.links.length, loops: roads.filter(r => !r.required && !r.exit).length, exits: exitCount, bridges,
-          unreachable, spurs, connectors, pruned, closed, extended, sharpJunctions: mesh.sharp,
-          tightCurves: roads.reduce((n, r) => n + tightBends(r.points, s.curveRadius), 0),
+          districts: n, links: links.chosen.length, tree: links.tree.size,
+          loops: links.chosen.filter(i => !links.tree.has(i) && cands[i].kind !== 'exit').length,
+          exits: links.chosen.filter(i => cands[i].kind === 'exit').length, bridges,
+          gateways: new Set(gates.flat().map(x => `${x.at[0]},${x.at[1]}`)).size,
+          throughRoads: through, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
+          connectors, unreachable,
+          tightCurves: roads.reduce((m, r) => m + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),
         },
       }]]),

@@ -5,7 +5,11 @@
 // Undeveloped district ends with no links or with two or more, never one: a road only enters
 // the wilds to pass through.
 
-export interface LinkCand { a: number; b: number; cost: number; kind: 'border' | 'river' | 'exit' }
+export interface LinkCand {
+  a: number; b: number; cost: number; kind: 'border' | 'river' | 'exit';
+  /** only to save a leaf (e.g. a border too short for a gateway's usual margins) */
+  spare?: boolean;
+}
 export interface LinkOpts {
   exits: number;
   redundancy: number;
@@ -20,7 +24,7 @@ export interface Links {
   chosen: number[];
   /** the tree's links (after Undeveloped leaves were dropped) */
   tree: Set<number>;
-  /** developed districts left with fewer than two links */
+  /** developed districts that couldn't get two links, and so got none */
   leaves: number[];
 }
 
@@ -29,6 +33,9 @@ export function chooseLinks(n: number, developed: boolean[], cands: LinkCand[], 
   const order = cands.map((_, i) => i).sort((x, y) => cands[x].cost - cands[y].cost || x - y);
   const deg = new Array<number>(n + 1).fill(0);
   const chosen = new Set<number>();
+  // Links the clean-up dropped: never chosen again (the leaf fix kept re-adding them, and each
+  // time the caller placed another gateway).
+  const banned = new Set<number>();
   const placed: number[] = [];
   const add = (i: number) => { chosen.add(i); deg[cands[i].a]++; deg[cands[i].b]++; };
   const drop = (i: number) => { chosen.delete(i); deg[cands[i].a]--; deg[cands[i].b]--; };
@@ -47,7 +54,7 @@ export function chooseLinks(n: number, developed: boolean[], cands: LinkCand[], 
   const tree = new Set<number>();
   for (const i of order) {
     const { a, b, kind } = cands[i];
-    if (kind === 'exit') continue;
+    if (kind === 'exit' || cands[i].spare) continue;
     const ra = find(a), rb = find(b);
     if (ra === rb) continue;
     parent[ra] = rb;
@@ -86,7 +93,10 @@ export function chooseLinks(n: number, developed: boolean[], cands: LinkCand[], 
       let progress = false;
       for (let v = 0; v < n; v++) {
         if (!isDev(v) || deg[v] !== 1) continue;
-        const opts1 = touching(v).filter(i => !chosen.has(i));
+        // Ordinary links first, then exits (the Exits setting is the number asked for), then
+        // spares.
+        const rank = (i: number) => (cands[i].spare ? 2 : cands[i].kind === 'exit' ? 1 : 0);
+        const opts1 = touching(v).filter(i => !chosen.has(i) && !banned.has(i)).sort((x, y) => rank(x) - rank(y));
         const direct = opts1.find(i => { const u = other(i, v); return u === n || isDev(u) || deg[u] >= 1; });
         if (direct !== undefined) { place(direct, true); progress = true; continue; }
         // Through the wilds: v - u - w, u Undeveloped and unlinked, w anything but v.
@@ -94,7 +104,7 @@ export function chooseLinks(n: number, developed: boolean[], cands: LinkCand[], 
         for (const i of opts1) {
           const u = other(i, v);
           for (const j of touching(u)) {
-            if (j === i || chosen.has(j) || other(j, u) === v) continue;
+            if (j === i || chosen.has(j) || banned.has(j) || other(j, u) === v) continue;
             const c = cands[i].cost + cands[j].cost;
             if (c < bestCost) { bestCost = c; best = [i, j]; }
           }
@@ -107,18 +117,22 @@ export function chooseLinks(n: number, developed: boolean[], cands: LinkCand[], 
   fixLeaves();
 
   // 4. Loops: the Redundancy share of the remaining developed–developed links, cheapest first.
-  const spare = order.filter(i => !chosen.has(i) && cands[i].kind !== 'exit' && isDev(cands[i].a) && isDev(cands[i].b));
+  const spare = order.filter(i => !chosen.has(i) && cands[i].kind !== 'exit' && !cands[i].spare && isDev(cands[i].a) && isDev(cands[i].b));
   let loops = Math.round(opts.redundancy * spare.length);
   for (const i of spare) {
     if (loops <= 0) break;
     if (place(i, false)) loops--;
   }
 
-  // 5. No Undeveloped district with exactly one link; fixing that may make a new developed leaf.
-  for (let guard = 0; guard <= n; guard++) {
-    const lone = [...chosen].find(i => [cands[i].a, cands[i].b].some(v => v < n && !developed[v] && deg[v] === 1));
+  // 5. No district with exactly one link: an Undeveloped one (the road would only enter the
+  //    wilds to stop), or a developed one no link could save (an enclave with one neighbour; it
+  //    goes unlinked, reached later from its neighbour's roads). Dropping a link may make a new
+  //    leaf, which gets its chance at a second link first.
+  for (let guard = 0; guard <= 2 * n; guard++) {
+    const lone = [...chosen].find(i => [cands[i].a, cands[i].b].some(v => v < n && deg[v] === 1));
     if (lone === undefined) break;
     drop(lone);
+    banned.add(lone);
     placed.splice(placed.indexOf(lone), 1);
     tree.delete(lone);
     fixLeaves();

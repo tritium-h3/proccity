@@ -89,4 +89,18 @@ describe('route start', () => {
     expect(route(g, [25, 25], { params, maxCost: 100, goal: { cell: cellOf(g, 375, 375) } })).toBeNull();
     expect(route(g, [25, 25], { params, maxCost: 2000, goal: { cell: cellOf(g, 375, 375) } })).not.toBeNull();
   });
+
+  it('stays in the cells it is allowed', () => {
+    const g = grid();
+    const p = route(g, [25, 205], { params, allow: c => Math.floor(c / g.w) * 10 >= 150, goal: { cell: cellOf(g, 375, 205) } })!;
+    for (const q of p) expect(q[1]).toBeGreaterThanOrEqual(150);
+    expect(route(g, [25, 205], { params, allow: c => (c % g.w) * 10 < 200, goal: { cell: cellOf(g, 375, 205) } })).toBeNull();
+  });
+
+  it('arrives heading the asked way', () => {
+    const g = grid();
+    const p = route(g, [55, 55], { params, maxTurn: 1, goalHeading: Math.PI / 2, goal: { cell: cellOf(g, 305, 205) } })!;
+    const [a, b] = [p[p.length - 2], p[p.length - 1]];
+    expect(Math.atan2(b[1] - a[1], b[0] - a[0])).toBeCloseTo(Math.PI / 2, 0);
+  });
 });

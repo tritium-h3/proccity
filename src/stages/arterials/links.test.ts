@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createRng } from '../../pipeline/seeds.js';
 import { chooseLinks, type LinkCand } from './links.js';
 
 const degrees = (n: number, cands: LinkCand[], chosen: number[]) => {
@@ -72,8 +73,43 @@ describe('chooseLinks', () => {
     expect(r.chosen.length).toBeLessThan(cands.length);
   });
 
-  it('reports a developed district that cannot get a second link', () => {
+  it('leaves out a district that cannot get a second link, rather than make a dead end', () => {
     const r = chooseLinks(2, [true, true], [border(0, 1, 1)], { exits: 0, redundancy: 0 });
+    expect(r.chosen).toEqual([]);
     expect(r.leaves.sort()).toEqual([0, 1]);
+    // 3 hangs off 2 with no other way out: 3 goes unlinked, the triangle 0-1-2 stays.
+    const t = chooseLinks(4, [true, true, true, true], [border(0, 1, 1), border(1, 2, 1), border(2, 0, 1), border(2, 3, 1)], { exits: 0, redundancy: 0 });
+    expect(t.leaves).toEqual([3]);
+    const d = degrees(4, [border(0, 1, 1), border(1, 2, 1), border(2, 0, 1), border(2, 3, 1)], t.chosen);
+    expect(d.slice(0, 3).every(x => x >= 2)).toBe(true);
+    expect(d[3]).toBe(0);
+  });
+
+  it('uses a spare link only to save a leaf, never for the tree or loops', () => {
+    // 0-1-2 in a line; 0-2 is spare (a short border). The tree must not take it, but leaves 0 and
+    // 2 may; a spare 1-3 never becomes a loop.
+    const cands: LinkCand[] = [border(0, 1, 5), border(1, 2, 5), { ...border(0, 2, 1), spare: true }, border(3, 1, 1), { ...border(3, 2, 1), spare: true }, border(3, 0, 9)];
+    const r = chooseLinks(4, [true, true, true, true], cands, { exits: 0, redundancy: 0 });
+    expect(r.tree.has(2)).toBe(false);
+    expect(r.tree.has(4)).toBe(false);
+    const all = chooseLinks(4, [true, true, true, true], [border(0, 1, 1), border(1, 2, 1), border(2, 0, 1), { ...border(0, 3, 1), spare: true }, border(3, 1, 1), border(3, 2, 1)], { exits: 0, redundancy: 1 });
+    expect(all.chosen).not.toContain(3);
+  });
+
+  it('places each link at most once, even when the clean-up drops links', () => {
+    // 0 developed hangs off Undeveloped 1, whose only other way is to developed 2, a dead end
+    // too: the clean-up drops links, and the leaf fix must not keep re-adding them.
+    const rng = createRng(7);
+    for (let trial = 0; trial < 300; trial++) {
+      const n = 4 + Math.floor(rng() * 5);
+      const dev = Array.from({ length: n }, () => rng() < 0.6);
+      const cands: LinkCand[] = [];
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (rng() < 0.4) cands.push({ ...border(i, j, 1 + Math.floor(rng() * 9)), spare: rng() < 0.2 });
+      const seen: number[] = [];
+      const r = chooseLinks(n, dev, cands, { exits: 0, redundancy: rng(), place: i => { seen.push(i); return true; } });
+      expect(seen.length, `trial ${trial}`).toBe(new Set(seen).size);
+      // And no district ends with exactly one link.
+      expect(degrees(n, cands, r.chosen).slice(0, n).some(d => d === 1), `trial ${trial}`).toBe(false);
+    }
   });
 });
