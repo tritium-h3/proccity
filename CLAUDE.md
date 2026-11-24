@@ -123,33 +123,58 @@ roads is pinned for that design.
     reroll the map.
   - Partition tests allow 1 mm per metre of district outline, since Clipper's millimetre
     rounding where cuts cross long region edges exceeds the default 1e-6.
-- **`stages/arterials/`:** a sparse network that links (every district reachable, a few loops)
-  and divides (superblocks). Density does **not** add roads.
+- **`stages/arterials/`:** planned over **districts, by gateways**
+  (`docs/superpowers/specs/2026-11-23-arterial-gateways-design.md`): links districts (every
+  developed one reachable, a few loops) and divides them (superblocks). **No dead ends.**
+  Density does **not** add roads.
+  - `links.ts`: over the district graph:
+    1. the cheapest spanning tree, without Undeveloped districts it merely hangs off;
+    2. the exits;
+    3. **no leaves**: a developed district with one link gets another. Ordinary links come
+       first, then exits, then spares (borders too short for the usual margins);
+    4. the Redundancy share of loops.
+
+    An Undeveloped district ends with zero links or two or more, never one. A developed
+    district with only one possible neighbour (an enclave) gets **no** link (`leaves`). A
+    dropped link is banned from coming back (the clean-up oscillated).
+  - `gateways.ts`: `sharedBorder` (the boundary two footprints share) and `placeOnBorder`. A
+    gateway sits a Usable width from the border's ends, off bends, preferring flat ground and
+    at least the spacing from its districts' other gateways (else `crowded`).
+  - `inside.ts`: pairs a district's gateways.
+    - Perimeter neighbours may become **border roads** (the Border roads share, only where
+      every corner takes a Curve-radius curve and the border never runs along water or the edge).
+    - The rest pair across, most opposite first: **through roads**.
+    - An odd one is a **tee** to the nearest road.
+    - Town centres and lone gateways go to a central junction (**star**).
   - `grid.ts`: a cost raster with cells of spacing/35, but at most ~300 cells across (100 m at
-    30 km). Grade along the heading costs steeply past **Max grade**,
-    but it's soft, never infinite. District borders are cheap corridors (×0.75), with a
-    penalty for running parallel beside them out to the Usable width. Shorelines (a district
-    edge with water on one side) are **not** borders: they drew roads along banks. Undeveloped
-    land costs ×3 to cross. Sea and ponds are blocked. The river costs ×30, more when not
-    crossing square. Placed roads repel parallel neighbours.
-  - `route.ts`: A\* with heading in the state (16 directions, at most ±45° per step, a turn
-    cost).
-  - `hubs.ts`, `mesh.ts`: Poisson hubs at the spacing (town centres first) and exits (dead
-    ends on land edges). Hubs keep the Usable width plus a cell from water and Undeveloped land:
-    leaf hubs became dead ends at the shore. A Delaunay mesh is reduced to a spanning tree plus the Redundancy
-    share of loops, refusing junctions sharper than the Junction angle.
+    30 km). Grade along the heading costs steeply past **Max grade**, but it's soft, never
+    infinite. District borders are cheap corridors (×0.75), with a penalty for running parallel
+    beside them out to the Usable width. Shorelines are **not** borders. Undeveloped land costs
+    ×3 to cross (and links touching it ×3 in the tree). Sea and ponds are blocked. The river
+    costs ×30, more when not crossing square. Placed roads repel parallel neighbours.
+  - `route.ts`: A\* with heading in the state: 16 directions and a turn cost. `maxTurn`
+    sectors per step comes from the Curve radius (one at the defaults; two made 90° Vs).
+    Options: `allow`, `goalHeading` (arrive square into a stub) and `maxCost`.
   - `smooth.ts`: simplify, then true circular arcs of the Curve radius (capped where segments
     are short; counted).
-  - `space.ts`: slivers (narrower than the Usable width, or tinier than its square). A loop is
-    dropped if that removes a sliver.
-  - `stage.ts`: route links, prune loops, repair connectivity, prune dead ends, exits, spurs
-    to untouched districts, then prune dead ends again. A dead end goes when every developed
-    district it reaches is reached by another road and the network stays whole. Path points
-    running along a border snap onto it (cells are 100 m, so "on" was up to 75 m beside it).
-    Routes aimed at a road finish on it, not a cell short. Spurs end clear of water where the
-    district allows. Bands have round ends. Roads are cut out of districts (`arterial` +
-    `superblock`) and the river (`bridge` + `water`). `data.roads` keeps the centrelines; the
-    stats count compromises.
+  - `space.ts`: slivers (narrower than the Usable width, or tinier than its square).
+  - `stage.ts`:
+    - Builds the graph: border links, river links (the shortest bridge between facing banks)
+      and exit links.
+    - Places gateways as links are chosen.
+    - Lays bridges, then each district's roads. Through roads leave and enter square, along
+      an exact stub that isn't smoothed. They stay within the district plus a Usable width
+      (confined to the district, they couldn't follow the contours).
+    - Every route is rejected if it loops (more than 270°) or makes a single turn over 120°;
+      the next, freer try is taken.
+    - Gateways too close for two stubs are joined **directly** (straight over land, else
+      along the border).
+    - Then each district's roads are joined up inside it (`joins`): the tree only links
+      districts.
+    - Path points along a border snap onto it. Road ids come from a counter. Bands have round
+      ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
+      + `water`). `data.roads` keeps the centrelines; the stats count compromises (`deadEnds`
+      should be 0).
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
   so regenerating stage k never disturbs earlier stages and undo is exact.

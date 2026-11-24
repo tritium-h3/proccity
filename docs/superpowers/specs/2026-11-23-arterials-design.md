@@ -1,5 +1,9 @@
 # Arterials stage
 
+> **Superseded in part (2026-11-23):** §3 "Hubs and the mesh" and §4 "Reaching every district" are
+> replaced by `2026-11-23-arterial-gateways-design.md` (planning by district gateways). The rest
+> stands, with the scale changes in `2026-11-24-city-scale-design.md`.
+
 ## Intent
 
 Arterials are stage 3. They do two jobs, in the owner's words: "Arterials link districts" and

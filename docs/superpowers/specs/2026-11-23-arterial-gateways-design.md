@@ -242,3 +242,40 @@ Visual check: screenshots of seeds 1–3 at Border roads 0, 0.3 and 1, and in th
 - How "roughly opposite" and "fairly straight" are scored.
 - How a town centre's junction is placed, and how roads merge before it.
 - Chaining details at gateways.
+
+## Built: calls made during implementation
+
+Recorded so the owner can check them. Each one is a deviation from, or a detail beyond, the design
+above.
+
+- **Enclaves get no arterial.** A developed district with only one possible neighbour (an
+  enclave, 10–500 ha on the test seeds) can't have two links, and one link would be a dead end.
+  It gets none and is counted in `leaves`; collectors and local roads will reach it from its
+  neighbour. (The design said its road would end at a junction near its middle: that's a dead
+  end.)
+- **Spare links.** A border too short for the usual margins (down to four road widths) can carry
+  a gateway in its middle, but only to save a leaf.
+- **Through roads may stray a Usable width outside their district.** Confined to the district
+  plus a cell, they were barely gentler than straight lines on hilly ground (0.93 of the
+  straight-line grade); with the margin, about 0.83. Unconstrained, they reach 0.70.
+- **No chaining at gateways.** Every road leaves and enters a gateway along an exact square
+  stub that isn't smoothed, so the roads on either side meet in a straight line without
+  being chained into one polyline.
+- **Joined up inside each district.** Two through roads that don't cross leave a district's
+  gateways in separate pieces, and the tree only links districts. Each district's roads are
+  joined inside it (`joins`).
+- **Direct joins.** Gateways too close for two stubs and a turn are joined straight over land,
+  else along the border the shorter way round. This also serves as the fallback when no
+  route between two gateways avoids looping.
+- **Border roads need every corner to take a Curve-radius curve.** The Junction-angle limit alone
+  left corners that the curve couldn't fit. That makes border roads rarer: 2–5 per city at the
+  default share.
+- **The town-centre merge** (roads merging before the centre) is not built. Roads simply meet
+  at the centre.
+- **Sliver loop removal** is not built. Slivers are counted only.
+- **Undeveloped links cost ×3 in the tree.** Where developed land comes in islands separated by
+  the wilds, roads must cross them: seed 2 has 18% of road length in Undeveloped land, seed 1
+  about 6%.
+- **Test bars changed for the design:** terrain-following is at most 0.85 of the straight-line
+  grade (was 0.8), and Undeveloped land at most 20% of road length.
+
