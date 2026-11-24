@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { createSite } from '../../doc/create.js';
+import { createCityDoc, createSite } from '../../doc/create.js';
 import { groundHeightAt } from '../../doc/ground.js';
 import { ancestry, attachChildren, leaves } from '../../doc/tree.js';
 import type { MultiPolygon, Point2, RegionNode, Settings } from '../../doc/types.js';
 import { intersect, offsetPolygons, offsetPolyline, union } from '../../grammar/clipper.js';
 import { checkPartition } from '../../grammar/partition.js';
 import { area, bounds, containsPoint } from '../../grammar/polygon.js';
+import { generate } from '../../pipeline/generate.js';
 import { createRng } from '../../pipeline/seeds.js';
+import { STAGES } from '../index.js';
 import { districts } from '../districts/stage.js';
 import { defaultsFor, resolveAttr } from '../settings.js';
 import { terrain } from '../terrain/stage.js';
@@ -142,11 +144,15 @@ describe('arterials stage', () => {
 
   it('follows the terrain', () => {
     const { tree, roads } = run({}, 1, { relief: 250, hilliness: 0.8 });
-    const along = roads.reduce((s, r) => s + meanGrade(tree, samples(r.points)), 0) / roads.length;
-    const straight = roads.reduce((s, r) => s + meanGrade(tree, samples([r.points[0], r.points[r.points.length - 1]])), 0) / roads.length;
-    // Gateway roads are pinned at both ends and kept near their district, so they can wind less
-    // than free routes did (0.7 unconstrained, about 0.83 as built).
-    expect(along).toBeLessThan(0.85 * straight);
+    // Weighted by length: tees and joins are short links that take the nearest road, so they
+    // can't wind, and a per-road mean counted a 300 m tee like a 3 km through road. (Tees that
+    // wound further to reach their own district's roads closed small rings.) Unweighted it was
+    // 0.82 (now 0.86); weighted 0.64 before tees took the nearest road, 0.72 after.
+    const len = (ps: Point2[]) => ps.slice(1).reduce((t, q, i) => t + Math.hypot(q[0] - ps[i][0], q[1] - ps[i][1]), 0);
+    const total = roads.reduce((s, r) => s + len(r.points), 0);
+    const along = roads.reduce((s, r) => s + len(r.points) * meanGrade(tree, samples(r.points)), 0) / total;
+    const straight = roads.reduce((s, r) => s + len(r.points) * meanGrade(tree, samples([r.points[0], r.points[r.points.length - 1]])), 0) / total;
+    expect(along).toBeLessThan(0.8 * straight);
   });
 
   it('climbs less steeply with a lower max grade', () => {
@@ -391,6 +397,25 @@ describe('arterials stage', () => {
           expect(on.length * 10, `seed ${seed} ${A.id} on ${B.id} from ${on[0]?.p.map(Math.round)}`).toBeLessThanOrEqual(100);
         }
       }
+    }, 300_000);
+
+    it('closes no small rings: no hole under 600 m across between roads (owner\'s city)', () => {
+      // The owner's city (2026-11-23) had four loops a few hundred metres across around a
+      // town-business district's tail. Tees that could only join their own district's roads
+      // crossed a neighbour's road to reach one just beyond it, and joins between a district's
+      // own pieces ignored a neighbour's road already linking them.
+      const stageSettings: Record<string, Settings> = {
+        terrain: { relief: 600, hilliness: 0.5, shore: 'none', river: true, riverWidth: 150, flatWidth: 2, ponds: 2, pondSize: 900, cellSize: 1800, irregularity: 0.5, regionSize: 4500 },
+        districts: { districtSize: 1800, settlements: 4, growth: 0.5 },
+        arterials: { spacing: 2000, redundancy: 0.3, borderRoads: 0.3, exits: 3, roadWidth: 25, junctionAngle: 60, curveRadius: 150, maxGrade: 8, usableWidth: 300 },
+      };
+      const base = createCityDoc({ name: 'owner', seed: 2490576178, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...stageSettings[st.id] } })) });
+      const doc = { ...base, generatedThrough: STAGES.length - 1, stages: base.stages.map(st => (st.id === 'terrain' ? { ...st, seedOffset: 2 } : st)) };
+      const { tree } = generate({ doc, fromStage: 0, stages: STAGES });
+      const roads = tree.data!.roads!;
+      const all = union(roads.flatMap(r => band(r.points, 25)), []);
+      const small = all.flatMap(poly => poly.slice(1)).filter(h => { const b = bounds([[h]]); return Math.max(b.maxX - b.minX, b.maxZ - b.minZ) < 600; });
+      expect(small.map(h => h[0].map(Math.round))).toEqual([]);
     }, 300_000);
 
     it('keeps out of Undeveloped land where it can', () => {

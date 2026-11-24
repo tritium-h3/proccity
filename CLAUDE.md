@@ -144,7 +144,10 @@ roads is pinned for that design.
     - Perimeter neighbours may become **border roads** (the Border roads share, only where
       every corner takes a Curve-radius curve and the border never runs along water or the edge).
     - The rest pair across, most opposite first: **through roads**.
-    - An odd one is a **tee** to the nearest road.
+    - An odd one is a **tee** to the nearest road of any district (one limited to its own
+      district's roads crossed a neighbour's road to reach it, closing a small ring). A road
+      that ends at the tee's own gateway doesn't count: joining it closes a ring back through
+      the gateway.
     - Town centres and lone gateways go to a central junction (**star**). Later spokes join
       the centre or any road already in the district, and the first spoke is cut back to its
       last joint (routed separately, spokes lay on top of each other for kilometres).
@@ -172,8 +175,10 @@ roads is pinned for that design.
       the next, freer try is taken.
     - Gateways too close for two stubs are joined **directly** (straight over land, else
       along the border).
-    - Then each district's roads are joined up inside it (`joins`): the tree only links
-      districts.
+    - Then each district's roads are joined up inside it (`joins`, tagged `join`): the tree
+      only links districts. Pieces already linked through a neighbour's road count as joined,
+      and a join may end on that road. Touching is tested on the lines, not on grid cells (a
+      slanted crossing slips between cells), so a join never closes a needless triangle.
     - A gateway's inward direction is the shared border's normal, its side tested 5 m out (a
       longer probe near a corner pointed both districts' stubs the same way). Coincident
       gateways merge. A border road mostly on an existing road is skipped, and one partly on

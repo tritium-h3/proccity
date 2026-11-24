@@ -28,7 +28,7 @@ const WATER = new Set(['sea', 'river', 'pond']);
 // Links touching Undeveloped land cost this much more: a road there only passes through.
 const WILD_LINK = 3;
 
-interface Road { id: string; points: Point2[]; exit: boolean; required: boolean; how: 'through' | 'border' | 'direct' | 'tee' | 'star' | 'bridge' | 'connector' }
+interface Road { id: string; points: Point2[]; exit: boolean; required: boolean; how: 'through' | 'border' | 'direct' | 'tee' | 'join' | 'star' | 'bridge' | 'connector' }
 
 /** Metres along a polyline to its point nearest p. */
 function perimOn(line: Point2[], p: Point2): number {
@@ -41,6 +41,26 @@ function perimOn(line: Point2[], p: Point2): number {
     run += L;
   }
   return best;
+}
+
+const segDist = (p: Point2, a: Point2, b: Point2) => {
+  const dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz;
+  const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / L)) : 0;
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz);
+};
+
+/** Whether two polylines come within `tol` metres of each other anywhere (crossing counts). */
+function roadsTouch(a: Road, b: Road, tol: number): boolean {
+  const box = (r: Road) => r.points.reduce((m, p) => [Math.min(m[0], p[0]), Math.min(m[1], p[1]), Math.max(m[2], p[0]), Math.max(m[3], p[1])], [Infinity, Infinity, -Infinity, -Infinity]);
+  const A = box(a), B = box(b);
+  if (A[0] > B[2] + tol || B[0] > A[2] + tol || A[1] > B[3] + tol || B[1] > A[3] + tol) return false;
+  const cross = (o: Point2, p: Point2, q: Point2) => (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+  for (let i = 0; i + 1 < a.points.length; i++) for (let j = 0; j + 1 < b.points.length; j++) {
+    const [p, q] = [a.points[i], a.points[i + 1]], [r, t] = [b.points[j], b.points[j + 1]];
+    if (cross(p, q, r) * cross(p, q, t) < 0 && cross(r, t, p) * cross(r, t, q) < 0) return true;
+    if (Math.min(segDist(p, r, t), segDist(q, r, t), segDist(r, p, q), segDist(t, p, q)) <= tol) return true;
+  }
+  return false;
 }
 
 export const arterials: Stage = {
@@ -635,10 +655,19 @@ export const arterials: Stage = {
         const at = gateInfo[i].at;
         const endsHere = (r: Road) => [r.points[0], r.points[r.points.length - 1]].some(p => Math.hypot(p[0] - at[0], p[1] - at[1]) < 2 * s.roadWidth);
         if (roads.some(r => meets(at, r) && !endsHere(r))) return;
-        // Not the road ending at this same gateway (the neighbour's): a tee joined it by looping
-        // round to a cell beside where it started.
-        const near = (c: number) => { const [cx, cz] = centreOf(g, c); return Math.hypot(cx - at[0], cz - at[1]) < 3 * g.cell; };
-        const path = routeBetween(i, { touches: c => onRoad(c) && masks[k].out.has(c) && !near(c) }, centres[k], false);
+        // Any road counts, in this district or not: a tee that may only join its own district's
+        // roads crossed a neighbour's road to reach one just beyond it, closing a small ring.
+        // Except a road ending at this same gateway (the neighbour's, waiting for this one):
+        // joining it anywhere closes a ring back through the gateway, as big as how far along it
+        // joins. It was excluded only within 3 cells, and tees joined it 300 m out instead.
+        const thr = Math.max(s.roadWidth / 2, 0.75 * g.cell);
+        const dist = (p: Point2, rs: Road[]) => Math.min(Infinity, ...rs.flatMap(r => r.points.slice(1).map((q, j) => segDist(p, r.points[j], q))));
+        const enders = roads.filter(endsHere), others = roads.filter(r => !endsHere(r));
+        const ownEnd = (c: number) => {
+          const p = centreOf(g, c);
+          return dist(p, enders) <= thr && dist(p, others) > thr;
+        };
+        const path = routeBetween(i, { touches: c => onRoad(c) && !ownEnd(c) }, centres[k], false);
         if (!path) { unreachable++; return; }
         lay(joinTo(path, roads), isExit(i), req(i), 'tee', true, 'start');
         ownRoads[k].push(roads[roads.length - 1]);
@@ -653,17 +682,28 @@ export const arterials: Stage = {
       for (let guard = 0; guard < 6; guard++) {
         const rs = ownRoads[k];
         if (rs.length < 2) break;
-        const cells = rs.map(cellsOf);
         const parent = rs.map((_, i) => i);
         const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+        // Touching is tested on the lines, not on shared cells: two roads crossing at a slant can
+        // pass between each other's sampled cells, and a join then closed a needless triangle.
         for (let a = 0; a < rs.length; a++) for (let b = a + 1; b < rs.length; b++) {
-          if ([...cells[a]].some(c => cells[b].has(c))) parent[find(a)] = find(b);
+          if (roadsTouch(rs[a], rs[b], s.roadWidth)) parent[find(a)] = find(b);
         }
+        // A neighbour's road touching two pieces joins them too (they meet at a shared gateway, or
+        // an earlier join ended on it).
+        const touching = (r: Road) => rs.map((_, i) => i).filter(i => roadsTouch(r, rs[i], s.roadWidth));
+        const foreign = roads.filter(r => !rs.includes(r)).map(r => ({ r, t: touching(r) })).filter(f => f.t.length);
+        for (const f of foreign) for (const i of f.t.slice(1)) parent[find(i)] = find(f.t[0]);
         const groups = new Map<number, number[]>();
         rs.forEach((_, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), i]));
         if (groups.size <= 1) break;
         const sorted = [...groups.values()].sort((x, y) => y.length - x.length || x[0] - y[0]);
-        const main = new Set(sorted[0].flatMap(i => [...cells[i]]));
+        // The goal is the main piece and the neighbours' roads touching it: a join that aimed only
+        // at this district's own roads crossed a neighbour's road (meeting them at a shared gateway)
+        // to reach one just beyond, closing a small ring.
+        const inMain = new Set(sorted[0]);
+        const mainRoads = [...sorted[0].map(i => rs[i]), ...foreign.filter(f => f.t.some(i => inMain.has(i))).map(f => f.r)];
+        const main = new Set(mainRoads.flatMap(r => [...cellsOf(r)]));
         const mainPts = sorted[0].flatMap(i => rs[i].points);
         let start: Point2 | null = null, toward: Point2 | null = null, bd = Infinity;
         for (const i of sorted[1]) for (const p of rs[i].points) for (const q of mainPts) {
@@ -673,7 +713,7 @@ export const arterials: Stage = {
         const allow = (c: number) => masks[k].out.has(c);
         const path = start && (route(g, start, { params, maxTurn, allow, goal: { touches: c => main.has(c) }, toward: toward! }) ?? route(g, start, { params, maxTurn, goal: { touches: c => main.has(c) }, toward: toward! }));
         if (!path || path.length < 2) break;
-        lay(joinTo([start!, ...path.slice(1)], sorted[0].map(i => rs[i])), false, true, 'tee');
+        lay(joinTo([start!, ...path.slice(1)], mainRoads), false, true, 'join');
         ownRoads[k].push(roads[roads.length - 1]);
         joins++;
       }
