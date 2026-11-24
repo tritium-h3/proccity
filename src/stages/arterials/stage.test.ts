@@ -307,6 +307,45 @@ describe('arterials stage', () => {
       }
     }, 120_000);
 
+    it('makes no hairpins', () => {
+      for (const seed of [1, 2, 3]) {
+        const { roads, settings } = get(seed);
+        const within = 2 * Number(settings.curveRadius);
+        for (const r of roads) {
+          const p = r.points;
+          for (let m = 0; m + 2 < p.length; m++) {
+            let turn = 0, dist = 0, h = Math.atan2(p[m + 1][1] - p[m][1], p[m + 1][0] - p[m][0]);
+            for (let q = m + 1; q + 1 < p.length && dist < within; q++) {
+              const nh = Math.atan2(p[q + 1][1] - p[q][1], p[q + 1][0] - p[q][0]);
+              let d = nh - h; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+              turn += d; h = nh; dist += Math.hypot(p[q + 1][0] - p[q][0], p[q + 1][1] - p[q][1]);
+              expect(Math.abs(turn), `seed ${seed} ${r.id} turns ${Math.round(turn * 180 / Math.PI)}° in ${Math.round(dist)} m at ${p[m + 1].map(Math.round)}`).toBeLessThanOrEqual(Math.PI / 2);
+            }
+          }
+        }
+      }
+    }, 120_000);
+
+    it('leaves no dead end near the site edge, and none just past a bridge', () => {
+      for (const seed of [1, 2, 3]) {
+        const { tree, roads, settings } = get(seed);
+        const river = tree.children.find(c => c.kind === 'river');
+        for (const e of deadEnds(roads)) {
+          const edge = 15000 - Math.max(Math.abs(e.at[0]), Math.abs(e.at[1]));
+          expect(edge, `seed ${seed} road ${e.road} ends ${Math.round(edge)} m from the edge`).toBeGreaterThanOrEqual(Number(settings.spacing) / 2);
+          if (!river) continue;
+          // Walk 1 km back along the road from its end: no river.
+          const pts = roads[e.road].points[0] === e.at ? roads[e.road].points : [...roads[e.road].points].reverse();
+          let run = 0;
+          for (const p of samples(pts, 10)) {
+            if (run > 1000) break;
+            expect(containsPoint(river.geometry.footprint, p), `seed ${seed} road ${e.road} ends ${Math.round(run)} m past the river`).toBe(false);
+            run += 10;
+          }
+        }
+      }
+    }, 120_000);
+
     it('keeps out of Undeveloped land where it can', () => {
       for (const seed of [1, 2, 3]) {
         const { tree, roads } = get(seed);

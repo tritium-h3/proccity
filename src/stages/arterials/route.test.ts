@@ -72,4 +72,21 @@ describe('route start', () => {
     for (const q of p.slice(0, 3)) expect(q[0]).toBeCloseTo(205, 5);
     expect(p[2][1]).toBeGreaterThanOrEqual(15 + 2 * 10 - 1e-6);
   });
+
+  it('turns at most maxTurn sectors per step, so a reversal takes room', () => {
+    // Leave heading east, finish to the west of the start: the route must turn round.
+    const g = grid();
+    const heading = (a: Point2, b: Point2) => Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const sharpest = (p: Point2[]) => Math.max(0, ...p.slice(2).map((q, i) => { let d = Math.abs(heading(p[i + 1], q) - heading(p[i], p[i + 1])); if (d > Math.PI) d = 2 * Math.PI - d; return d; }));
+    const one = route(g, [200, 200], { params, startHeading: 0, maxTurn: 1, goal: { cell: cellOf(g, 105, 205) } })!;
+    const two = route(g, [200, 200], { params, startHeading: 0, maxTurn: 2, goal: { cell: cellOf(g, 105, 205) } })!;
+    expect(sharpest(one)).toBeLessThanOrEqual(Math.PI / 6 + 1e-9); // one sector: at most 26.6°
+    expect(sharpest(two)).toBeGreaterThan(sharpest(one));
+  });
+
+  it('gives up past maxCost', () => {
+    const g = grid();
+    expect(route(g, [25, 25], { params, maxCost: 100, goal: { cell: cellOf(g, 375, 375) } })).toBeNull();
+    expect(route(g, [25, 25], { params, maxCost: 2000, goal: { cell: cellOf(g, 375, 375) } })).not.toBeNull();
+  });
 });

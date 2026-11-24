@@ -1,5 +1,6 @@
 // Least-cost routing over the grid, with heading in the state. Sixteen move directions (the
-// eight neighbours plus knight moves); a step may turn by at most two sectors (about 45°), and
+// eight neighbours plus knight moves); a step may turn by at most maxTurn sectors (two, about
+// 45°, unless the stage asks for fewer), and
 // turning costs. So a route can't zig-zag, and it bends gradually.
 
 import type { Point2 } from '../../doc/types.js';
@@ -25,6 +26,11 @@ export interface RouteOpts {
   goal: { cell: number } | { touches: (cell: number) => boolean };
   /** for a `touches` goal: a point to aim at (guides the search; the goal still decides) */
   toward?: Point2;
+  /** sectors a step may turn (default 2). The stage sets it from the curve radius: at 100 m
+   *  cells two sectors a step let a route make a 90° V in one cell, which no curve could fit. */
+  maxTurn?: number;
+  /** give up once the cheapest open route costs more than this */
+  maxCost?: number;
 }
 
 /** Binary min-heap of [priority, state]. */
@@ -107,14 +113,16 @@ export function route(g: Grid, start: Point2, opts: RouteOpts): Point2[] | null 
   const heads = opts.startHeading !== undefined ? [nearestHeading(opts.startHeading)] : [...Array(H).keys()];
   for (const k of heads) { set(s * H + k, 0, -1); heap.push(h(s), s * H + k); }
 
+  const maxTurn = opts.maxTurn ?? MAX_TURN, maxCost = opts.maxCost ?? Infinity;
   let end = -1;
   while (heap.size) {
     const st = heap.pop();
+    if (costOf(st) > maxCost) break;
     const c = Math.floor(st / H), k = st % H;
     if (c === goalCell || (touches && c !== s && touches(c))) { end = st; break; }
     const base = costOf(st);
     const ci = c % g.w, cj = Math.floor(c / g.w);
-    for (let dk = -MAX_TURN; dk <= MAX_TURN; dk++) {
+    for (let dk = -maxTurn; dk <= maxTurn; dk++) {
       const nk = (k + dk + H) % H;
       const [dx, dz] = MOVES[nk];
       const ni = ci + dx, nj = cj + dz;
