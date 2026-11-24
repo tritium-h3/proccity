@@ -128,19 +128,26 @@ roads is pinned for that design.
   - `grid.ts`: a cost raster with cells of spacing/35, but at most ~300 cells across (100 m at
     30 km). Grade along the heading costs steeply past **Max grade**,
     but it's soft, never infinite. District borders are cheap corridors (×0.75), with a
-    penalty for running parallel just beside them. Sea and ponds are blocked. The river costs
-    ×30, more when not crossing square. Placed roads repel parallel neighbours.
+    penalty for running parallel beside them out to the Usable width. Shorelines (a district
+    edge with water on one side) are **not** borders: they drew roads along banks. Undeveloped
+    land costs ×3 to cross. Sea and ponds are blocked. The river costs ×30, more when not
+    crossing square. Placed roads repel parallel neighbours.
   - `route.ts`: A\* with heading in the state (16 directions, at most ±45° per step, a turn
     cost).
   - `hubs.ts`, `mesh.ts`: Poisson hubs at the spacing (town centres first) and exits (dead
-    ends on land edges). A Delaunay mesh is reduced to a spanning tree plus the Redundancy
+    ends on land edges). Hubs keep the Usable width plus a cell from water and Undeveloped land:
+    leaf hubs became dead ends at the shore. A Delaunay mesh is reduced to a spanning tree plus the Redundancy
     share of loops, refusing junctions sharper than the Junction angle.
   - `smooth.ts`: simplify, then true circular arcs of the Curve radius (capped where segments
     are short; counted).
   - `space.ts`: slivers (narrower than the Usable width, or tinier than its square). A loop is
     dropped if that removes a sliver.
-  - `stage.ts`: route links, prune loops, repair connectivity, exits, then spurs to untouched
-    districts. Bands have round ends. Roads are cut out of districts (`arterial` +
+  - `stage.ts`: route links, prune loops, repair connectivity, prune dead ends, exits, spurs
+    to untouched districts, then prune dead ends again. A dead end goes when every developed
+    district it reaches is reached by another road and the network stays whole. Path points
+    running along a border snap onto it (cells are 100 m, so "on" was up to 75 m beside it).
+    Routes aimed at a road finish on it, not a cell short. Spurs end clear of water where the
+    district allows. Bands have round ends. Roads are cut out of districts (`arterial` +
     `superblock`) and the river (`bridge` + `water`). `data.roads` keeps the centrelines; the
     stats count compromises.
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through

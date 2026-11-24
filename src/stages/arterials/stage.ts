@@ -13,7 +13,7 @@ import { difference, intersect, offsetPolyline, union } from '../../grammar/clip
 import { area, bounds, centroid, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
 import type { Stage } from '../types.js';
-import { BLOCKED, buildGrid, cellOf, centreOf, HILLS, LAND, markRoad, RIVER, stepCost, type CostParams } from './grid.js';
+import { BLOCKED, buildGrid, cellOf, centreOf, HILLS, isUsable, LAND, markRoad, RIVER, stepCost, WILD, type CostParams } from './grid.js';
 import { placeExits, poissonHubs } from './hubs.js';
 import { buildMesh } from './mesh.js';
 import { route } from './route.js';
@@ -58,20 +58,38 @@ export const arterials: Stage = {
     const blocked = terrainKids.filter(n => n.kind === 'sea' || n.kind === 'pond').map(n => n.geometry.footprint);
     const river = terrainKids.find(n => n.kind === 'river');
     const hills = dists.filter(d => d.attrs.terrain === 'hills').map(d => d.geometry.footprint);
+    // Undeveloped land: dearer to cross, and no road ends in or beside it (the owner).
+    const wild = dists.filter(d => d.attrs.type === 'undeveloped').map(d => d.geometry.footprint);
     const sb = bounds(tree.geometry.footprint);
     const size = Math.max(sb.maxX - sb.minX, sb.maxZ - sb.minZ);
     const onSiteEdge = (p: Point2) => Math.min(Math.abs(p[0] - sb.minX), Math.abs(p[0] - sb.maxX), Math.abs(p[1] - sb.minZ), Math.abs(p[1] - sb.maxZ)) < 0.5;
     const cellM = Math.max(s.spacing / CELLS_PER_SPACING, size / MAX_GRID);
+    // Road ends (hubs, spur ends) keep this far from water and Undeveloped land: hubs on the
+    // flat ground beside a pond or river drew dead ends right up to the shore. A cell more
+    // than the Usable width, since a road ends at a cell centre.
+    const keepOff = s.usableWidth + cellM;
     const districtWidth = Math.sqrt(dists.reduce((t, d) => t + area(d.geometry.footprint), 0) / dists.length);
     // Kinds painted in order (later wins); elevations from the terrain's own triangles, water
     // first so land wins along shared edges. Point lookups per cell took seconds at 5 km.
     const water = terrainKids.filter(n => n.kind === 'sea' || n.kind === 'pond' || n.kind === 'river').flatMap(n => n.geometry.footprint);
+    // District borders that are really shorelines (water on one side) aren't corridors: they
+    // drew roads along river banks and pond shores, and snapping a road onto one spilled it
+    // over the water.
+    const waterBoxes = water.map(poly => ({ poly: [poly] as MultiPolygon, box: bounds([poly]) }));
+    const wetAt = (p: Point2) => waterBoxes.some(w => p[0] >= w.box.minX && p[0] <= w.box.maxX && p[1] >= w.box.minZ && p[1] <= w.box.maxZ && containsPoint(w.poly, p));
+    const wetSide = (a: Point2, b: Point2) => {
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len < 1e-9) return false;
+      const nx = -(b[1] - a[1]) / len, nz = (b[0] - a[0]) / len, mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+      return wetAt([mx + nx, mz + nz]) || wetAt([mx - nx, mz - nz]);
+    };
     const g = buildGrid({
       bounds: { minX: sb.minX, minZ: sb.minZ, size },
       elevAt: (x, z) => groundHeightAt(tree, x, z),
       kindAt: () => LAND,
       kinds: [
         { footprint: tree.geometry.footprint, kind: LAND },
+        ...wild.map(footprint => ({ footprint, kind: WILD })),
         ...hills.map(footprint => ({ footprint, kind: HILLS })),
         ...(river ? [{ footprint: river.geometry.footprint, kind: RIVER }] : []),
         ...blocked.map(footprint => ({ footprint, kind: BLOCKED })),
@@ -80,13 +98,20 @@ export const arterials: Stage = {
       districts: dists.map(d => d.geometry.footprint),
       river: river?.geometry.footprint,
       water: [...water, ...tree.geometry.footprint],
+      wild,
       // District borders are corridors, but not the site's own edge: roads hugged it.
-      skipSegment: (a, b) => onSiteEdge(a) && onSiteEdge(b),
+      skipSegment: (a, b) => (onSiteEdge(a) && onSiteEdge(b)) || wetSide(a, b),
     }, cellM, {
-      band: 2 * cellM, edgeScale: 0.44 * districtWidth, roadReach: Math.max(8 * cellM, 1.1 * s.usableWidth),
-      riverReach: 5 * cellM, bankExtra: cellM / 2,
+      // Running alongside a border costs out to the Usable width: nearer than that, the strip
+      // left between road and border is too thin to use (the owner: roads crept along edges).
+      band: Math.max(2 * cellM, s.usableWidth), edgeScale: 0.44 * districtWidth, roadReach: Math.max(8 * cellM, 1.1 * s.usableWidth),
+      riverReach: 5 * cellM, bankExtra: cellM / 2, bankReach: keepOff, wildReach: keepOff,
     });
-    const usable = (c: number) => g.kind[c] === LAND || g.kind[c] === HILLS;
+    const usable = (c: number) => isUsable(g.kind[c]);
+    // Clear of water and Undeveloped land. The bank field holds the site edge too; that
+    // doesn't count here (hubs have their own edge margin).
+    const edgeDist = (p: Point2) => Math.min(p[0] - sb.minX, sb.maxX - p[0], p[1] - sb.minZ, sb.maxZ - p[1]);
+    const clear = (c: number) => usable(c) && g.wild[c] >= keepOff && (g.bank[c] >= keepOff || edgeDist(centreOf(g, c)) <= g.bank[c] + 1);
     const gradeAt = (c: number) => {
       const i = c % g.w, j = Math.floor(c / g.w);
       let m = 0;
@@ -105,23 +130,22 @@ export const arterials: Stage = {
         if (i < 0 || j < 0 || i >= g.w || j >= g.h) continue;
         const c = j * g.w + i;
         if (!usable(c)) continue;
-        const score = gradeAt(c) + Math.hypot(di, dj) * 0.001;
+        // Flattest, but clear of water and Undeveloped land where that's possible.
+        const score = gradeAt(c) + Math.hypot(di, dj) * 0.001 + (clear(c) ? 0 : 1e3);
         if (score < bs) { bs = score; best = c; }
       }
       return best >= 0 ? centreOf(g, best) : p;
     };
 
     // 2. Hubs: the town centres, then spaced points on usable, not-too-steep ground.
-    // Sampled hubs only on developed land: Undeveloped districts needn't be reached (the
-    // owner), and hubs there drew roads through the wilds. Roads still cross it when it's the way.
-    const wild = dists.filter(d => d.attrs.type === 'undeveloped').map(d => d.geometry.footprint);
+    // Sampled hubs only on developed land, clear of water and of Undeveloped land: a hub there
+    // that the mesh leaves as a leaf is a dead end at the shore or in the wilds.
     // Hubs keep away from the site edge, or links between them ran along it.
     const margin = (s.spacing * 3) / 14; // 150 m at the old 700 m spacing
-    const edgeDist = (p: Point2) => Math.min(p[0] - sb.minX, sb.maxX - p[0], p[1] - sb.minZ, sb.maxZ - p[1]);
     // Town centres too keep inside the edge margin (one on the edge sent roads along it).
     const inset = (p: Point2): Point2 => [Math.min(sb.maxX - margin, Math.max(sb.minX + margin, p[0])), Math.min(sb.maxZ - margin, Math.max(sb.minZ + margin, p[1]))];
     const fixed = dists.filter(d => d.attrs.anchor === 'main' || d.attrs.anchor === 'minor').map(d => nudge(inset(centroid(d.geometry.footprint))));
-        const hubs = poissonHubs(fixed, s.spacing, p => { const c = cellOf(g, p[0], p[1]); return containsPoint(tree.geometry.footprint, p) && edgeDist(p) >= margin && usable(c) && gradeAt(c) <= params.maxGrade && !wild.some(w => containsPoint(w, p)); }, { minX: sb.minX, minZ: sb.minZ, size }, rng);
+        const hubs = poissonHubs(fixed, s.spacing, p => { const c = cellOf(g, p[0], p[1]); return containsPoint(tree.geometry.footprint, p) && edgeDist(p) >= margin && usable(c) && clear(c) && gradeAt(c) <= params.maxGrade; }, { minX: sb.minX, minZ: sb.minZ, size }, rng);
 
     // 3. The mesh, with link costs estimated along the straight line.
     const estimate = (a: Point2, b: Point2) => {
@@ -147,7 +171,23 @@ export const arterials: Stage = {
 
     // 4. Route the links: required ones first (cheapest first), then loops.
     const roads: Road[] = [];
-    const lay = (points: Point2[], exit: boolean, required: boolean, keep = 0) => {
+    // A path runs through cell centres, so "on" a border it can be most of a cell beside it,
+    // leaving a strip of district too thin to use. Points running along a border move onto it.
+    const onBorder = Math.max(s.roadWidth / 2, 0.75 * cellM);
+    const snap = (points: Point2[], from: number): Point2[] => {
+      const out: Point2[] = points.map((p, i) => {
+        if (i < Math.max(1, from) || i >= points.length - 1) return p;
+        const c = cellOf(g, p[0], p[1]);
+        if (g.border[c] > onBorder) return p;
+        const a = points[i - 1], b = points[i + 1];
+        const heading = Math.atan2(b[1] - a[1], b[0] - a[0]);
+        if (Math.abs(Math.cos(heading - g.borderNormal[c])) > 0.5) return p; // crossing it
+        return [g.borderFootX[c], g.borderFootZ[c]];
+      });
+      return out.filter((p, i) => i === 0 || Math.hypot(p[0] - out[i - 1][0], p[1] - out[i - 1][1]) > 1);
+    };
+    const lay = (raw: Point2[], exit: boolean, required: boolean, keep = 0) => {
+      const points = snap(raw, keep);
       // The first `keep` points stay as they are (an exit's straight stub), the rest is smoothed.
       const line = keep > 0 ? [...points.slice(0, keep), ...smoothRoad(points.slice(keep - 1), s.curveRadius, 0.6 * cellM).slice(1)] : smoothRoad(points, s.curveRadius, 0.6 * cellM);
       roads.push({ id: `road:${roads.length}`, points: line, exit, required });
@@ -192,6 +232,20 @@ export const arterials: Stage = {
     // Within three-quarters of a cell too: at 100 m cells half a road width (12.5 m) missed cells.
     const onRoad = (c: number) => g.road[c] <= Math.max(s.roadWidth / 2, 0.75 * g.cell);
 
+    // A route aimed at a road stops in a cell beside it, up to most of a cell short (a visible
+    // gap at 100 m cells): finish on the nearest point of those roads.
+    const joinTo = (path: Point2[], rs: Road[]): Point2[] => {
+      const end = path[path.length - 1];
+      let best: Point2 | null = null, bd = Infinity;
+      for (const r of rs) for (let i = 0; i + 1 < r.points.length; i++) {
+        const a = r.points[i], b = r.points[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz;
+        const t = L ? Math.max(0, Math.min(1, ((end[0] - a[0]) * dx + (end[1] - a[1]) * dz) / L)) : 0;
+        const q: Point2 = [a[0] + t * dx, a[1] + t * dz], d = Math.hypot(end[0] - q[0], end[1] - q[1]);
+        if (d < bd) { bd = d; best = q; }
+      }
+      return best && bd > 1 && bd < 2 * g.cell ? [...path, best] : path;
+    };
+
     // 5b. One network: the mesh can fall into pieces (hubs either side of a bay with no allowed
     //     link), so join any stray piece to the main one with a connector.
     let connectors = 0;
@@ -224,9 +278,60 @@ export const arterials: Stage = {
       }
       const path = start && route(g, start, { params, goal: { touches: c => main.has(c) }, toward: toward! });
       if (!path || path.length < 2) break;
-      lay(path, false, true);
+      lay(joinTo(path, sorted[0].map(i => roads[i])), false, true);
       connectors++;
     }
+
+    // 5c. A dead end goes when every developed district it reaches is reached by another road
+    //     (and the network stays in one piece): a leaf hub's road otherwise ran on to nowhere,
+    //     often a shore or the edge of the wilds. Any district this leaves untouched gets a spur.
+    let pruned = 0;
+      const developed = dists.filter(d => d.attrs.type !== 'undeveloped').map(d => ({ d, box: bounds(d.geometry.footprint) }));
+      const reachCache = new Map<Road, Set<RegionNode>>();
+      const reachOf = (r: Road) => {
+        let set = reachCache.get(r);
+        if (!set) {
+          const { band, box } = bandInfo(r);
+          set = new Set(developed.filter(x => overlaps(x.box, box) && area(intersect(x.d.geometry.footprint, band)) > 1).map(x => x.d));
+          reachCache.set(r, set);
+        }
+        return set;
+      };
+      const cellCache = new Map<Road, Set<number>>();
+      const cellsCached = (r: Road) => { let c = cellCache.get(r); if (!c) { c = cellsOf(r); cellCache.set(r, c); } return c; };
+    const prune = () => {
+      const pieces = (rs: Road[]) => {
+        const owner = new Map<number, number>(), parent = rs.map((_, i) => i);
+        const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+        rs.forEach((r, i) => { for (const c of cellsCached(r)) { const o = owner.get(c); if (o === undefined) owner.set(c, i); else parent[find(i)] = find(o); } });
+        return new Set(rs.map((_, i) => find(i))).size;
+      };
+      const meets = (p: Point2, r: Road) => r.points.some((a, i) => {
+        if (i + 1 >= r.points.length) return false;
+        const b = r.points[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz;
+        const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / L)) : 0;
+        return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz) < s.roadWidth;
+      });
+      const dangling = (r: Road) => [r.points[0], r.points[r.points.length - 1]].some(p => !roads.some(o => o !== r && meets(p, o)));
+      const before = pruned;
+      for (let changed = true; changed;) {
+        changed = false;
+        let now = pieces(roads);
+        for (const r of [...roads]) {
+          if (r.exit || !dangling(r)) continue;
+          const others = roads.filter(o => o !== r);
+          if (![...reachOf(r)].every(d => others.some(o => reachOf(o).has(d)))) continue;
+          const after = pieces(others);
+          if (after > now) continue;
+          roads.splice(roads.indexOf(r), 1);
+          now = after;
+          pruned++;
+          changed = true;
+        }
+      }
+      if (pruned > before) { g.road.fill(Infinity); for (const r of roads) markRoad(g, r.points); }
+    };
+    prune();
 
     // 6. Exits: dead ends from the site edge, inward, to the nearest arterial.
     let exitCount = 0;
@@ -246,7 +351,7 @@ export const arterials: Stage = {
         const edge: Point2 = [start[0] - e.inward[0] * back, start[1] - e.inward[1] * back];
         const path = route(g, start, { params, startHeading: Math.atan2(e.inward[1], e.inward[0]), straightStart: EXIT_STUB, goal: { touches: onRoad }, toward: centroid(tree.geometry.footprint) });
         if (!path) continue;
-        lay([edge, ...path], true, true, EXIT_STUB + 2);
+        lay(joinTo([edge, ...path], roads), true, true, EXIT_STUB + 2);
         exitCount++;
       }
     }
@@ -265,24 +370,44 @@ export const arterials: Stage = {
         // Start on the road point nearest the district.
         let start: Point2 | null = null, bd = Infinity;
         for (const r of roads) for (const p of r.points) { const dd = Math.hypot(p[0] - target[0], p[1] - target[1]); if (dd < bd) { bd = dd; start = p; } }
-        // Goal cells: any whose centre is inside, plus the cells holding its corners (a small
-        // district may contain no cell centre at all).
-        const goal = new Set<number>();
-        // Not corners on the site edge: a spur ending there ran along the edge.
-        for (const ring of fp.flat()) for (const p of ring) if (edgeDist(p) > g.cell) goal.add(cellOf(g, p[0], p[1]));
+        // Goal cells, best first: cells whose centre is inside and clear of water and Undeveloped
+        // land; corner cells that are clear (a small district may hold no cell centre at all);
+        // then any inside cell; then any corner. Not corners on the site edge: a spur ending
+        // there ran along the edge.
+        const inside: number[] = [], corners: number[] = [];
+        for (const ring of fp.flat()) for (const p of ring) if (edgeDist(p) > g.cell) corners.push(cellOf(g, p[0], p[1]));
         const fb = bounds(fp);
-        for (let z = fb.minZ; z <= fb.maxZ; z += g.cell / 2) for (let x = fb.minX; x <= fb.maxX; x += g.cell / 2) if (containsPoint(fp, [x, z])) goal.add(cellOf(g, x, z));
+        for (let j = Math.max(0, Math.floor((fb.minZ - g.minZ) / g.cell)); j < g.h && g.minZ + j * g.cell <= fb.maxZ; j++) {
+          for (let i = Math.max(0, Math.floor((fb.minX - g.minX) / g.cell)); i < g.w && g.minX + i * g.cell <= fb.maxX; i++) {
+            const c = j * g.w + i;
+            if (usable(c) && containsPoint(fp, centreOf(g, c))) inside.push(c);
+          }
+        }
+        let goal = new Set([inside.filter(clear), corners.filter(clear)].find(cs => cs.length) ?? []);
+        if (!goal.size) {
+          // Nowhere clear (a district along a shore): its cells farthest from the water, out of
+          // Undeveloped land. Ending near the wilds is fine: the end is in the district it serves.
+          const tame = (cs: number[]) => cs.filter(c => g.wild[c] > g.cell);
+          const cs = [tame(inside), tame(corners), inside, corners].find(x => x.length) ?? [];
+          const fromWater = (c: number) => (edgeDist(centreOf(g, c)) <= g.bank[c] + 1 ? Infinity : g.bank[c]);
+          const most = Math.max(0, ...cs.map(fromWater));
+          goal = new Set(cs.filter(c => fromWater(c) >= 0.9 * most));
+        }
         const path = start && route(g, start, { params, goal: { touches: c => goal.has(c) }, toward: target });
         if (!path || path.length < 2) { unreachable++; continue; }
-        // The goal cell may only hold one of the district's corners: finish at that corner.
+        // The goal cell may only hold one of the district's corners: finish at that corner. A path
+        // already inside the district stays as it is (a corner may be on the shore).
         const end = path[path.length - 1];
         let corner: Point2 = end, cd = Infinity;
-        for (const ring of fp.flat()) for (const p of ring) { const dd = Math.hypot(p[0] - end[0], p[1] - end[1]); if (dd < cd) { cd = dd; corner = p; } }
-        lay(cd > 1 ? [...path, corner] : path, false, true);
+        if (!containsPoint(fp, end)) for (const ring of fp.flat()) for (const p of ring) { const dd = Math.hypot(p[0] - end[0], p[1] - end[1]); if (dd < cd) { cd = dd; corner = p; } }
+        lay(cd > 1 && cd < Infinity ? [...path, corner] : path, false, true);
         spurs++;
         all = union(all, bandOf(roads[roads.length - 1]));
       }
     }
+
+    // Again with exits and spurs in: one may reach what a dead end was kept for.
+    prune();
 
     // 8. Cut the roads out of the districts and the river. Each road's piece is its band minus
     //    the bands of earlier roads, taken locally (only bands overlapping the region).
@@ -349,7 +474,7 @@ export const arterials: Stage = {
         roads: roads.map(r => ({ id: r.id, points: r.points, exit: r.exit })),
         stats: {
           hubs: hubs.length, candidates: mesh.candidates, links: mesh.links.length, loops: roads.filter(r => !r.required && !r.exit).length, exits: exitCount, bridges,
-          unreachable, spurs, connectors, sharpJunctions: mesh.sharp,
+          unreachable, spurs, connectors, pruned, sharpJunctions: mesh.sharp,
           tightCurves: roads.reduce((n, r) => n + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),
         },

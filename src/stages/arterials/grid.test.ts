@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { MultiPolygon } from '../../doc/types.js';
 import { rect } from '../../grammar/polygon.js';
-import { BLOCKED, buildGrid, cellOf, LAND, markRoad, RIVER, stepCost, type GridInput } from './grid.js';
+import { BLOCKED, buildGrid, cellOf, LAND, markRoad, RIVER, stepCost, WILD, type GridInput } from './grid.js';
 
 const P = { maxGrade: 0.08, roadWidth: 25, usableWidth: 60 };
 const E = 0, N = Math.PI / 2; // headings: +x, +z
@@ -15,6 +15,10 @@ const step = (g: ReturnType<typeof grid>, x: number, z: number, h: number) => {
 };
 
 describe('stepCost', () => {
+  it('charges more to cross Undeveloped land', () => {
+    expect(step(grid({ kindAt: () => WILD }), 105, 105, E)).toBeGreaterThan(2 * step(grid(), 105, 105, E));
+  });
+
   it('costs a flat step its length', () => {
     expect(step(grid(), 105, 105, E)).toBeCloseTo(10);
   });
@@ -83,5 +87,21 @@ describe('grid fixes', () => {
       expect(fast.kind[c], `${x},${z}`).toBe(slow.kind[c]);
       expect(fast.elev[c]).toBeCloseTo(slow.elev[c], 4);
     }
+  });
+});
+
+describe('buildGrid', () => {
+  it('records where the nearest district border is, so a road can move onto it', () => {
+    const g = grid({ districts: [rect(0, 0, 200, 400), rect(200, 0, 400, 400)] });
+    const c = cellOf(g, 175, 105);
+    expect(g.borderFootX[c]).toBeCloseTo(200);
+    expect(g.borderFootZ[c]).toBeCloseTo(105);
+  });
+
+  it('measures the distance to Undeveloped land, zero inside it', () => {
+    const g = buildGrid({ bounds: { minX: 0, minZ: 0, size: 400 }, elevAt: () => 0, kindAt: () => LAND, districts: [], wild: [rect(200, 0, 400, 400)] }, 10, { wildReach: 100 });
+    expect(g.wild[cellOf(g, 255, 105)]).toBe(0);
+    expect(g.wild[cellOf(g, 155, 105)]).toBeCloseTo(45);
+    expect(g.wild[cellOf(g, 55, 105)]).toBe(Infinity);
   });
 });
