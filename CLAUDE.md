@@ -145,11 +145,14 @@ roads is pinned for that design.
       every corner takes a Curve-radius curve and the border never runs along water or the edge).
     - The rest pair across, most opposite first: **through roads**.
     - An odd one is a **tee** to the nearest road.
-    - Town centres and lone gateways go to a central junction (**star**).
+    - Town centres and lone gateways go to a central junction (**star**). Later spokes join
+      the centre or any road already in the district, and the first spoke is cut back to its
+      last joint (routed separately, spokes lay on top of each other for kilometres).
   - `grid.ts`: a cost raster with cells of spacing/35, but at most ~300 cells across (100 m at
     30 km). Grade along the heading costs steeply past **Max grade**, but it's soft, never
     infinite. District borders are cheap corridors (×0.75), with a penalty for running parallel
-    beside them out to the Usable width. Shorelines are **not** borders. Undeveloped land costs
+    beside them out to the Usable width. Running along a placed road costs up to ×4 beside it
+    and ×9 on top of it; crossing is free. Shorelines are **not** borders. Undeveloped land costs
     ×3 to cross (and links touching it ×3 in the tree). Sea and ponds are blocked. The river
     costs ×30, more when not crossing square. Placed roads repel parallel neighbours.
   - `route.ts`: A\* with heading in the state: 16 directions and a turn cost. `maxTurn`
@@ -171,7 +174,11 @@ roads is pinned for that design.
       along the border).
     - Then each district's roads are joined up inside it (`joins`): the tree only links
       districts.
-    - Path points along a border snap onto it. Road ids come from a counter. Bands have round
+    - A gateway's inward direction is the shared border's normal, its side tested 5 m out (a
+      longer probe near a corner pointed both districts' stubs the same way). Coincident
+      gateways merge. A border road mostly on an existing road is skipped, and one partly on
+      it is routed across instead.
+    - Path points along a border snap onto it, unless a road already runs there. Road ids come from a counter. Bands have round
       ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
       + `water`). `data.roads` keeps the centrelines; the stats count compromises (`deadEnds`
       should be 0).

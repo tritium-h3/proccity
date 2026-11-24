@@ -61,6 +61,14 @@ describe('stepCost', () => {
     expect(step(g, 135, 105, N)).toBeGreaterThan(before);
     expect(step(g, 135, 105, E)).toBeCloseTo(before, 5); // crossing towards it is fine
   });
+
+  it('keeps new roads from running along on top of placed ones, but lets them cross', () => {
+    const g = grid();
+    const before = step(g, 105, 105, N);
+    markRoad(g, [[100, 0], [100, 400]]);
+    expect(step(g, 105, 105, N)).toBeGreaterThan(2 * before); // along it, on it
+    expect(step(g, 95, 105, E)).toBeCloseTo(before, 5); // across it
+  });
 });
 
 describe('grid fixes', () => {

@@ -278,7 +278,8 @@ export const arterials: Stage = {
 
     // 3. Links and their gateways. Gateways are placed as links are chosen (tree, exits, no-leaf
     //    links, loops), each the spacing from its districts' other gateways where possible.
-    interface Gateway { at: Point2; cand: number; exit: boolean }
+    /** `normal`: the shared border's normal there (either way), when placement gave one */
+    interface Gateway { at: Point2; cand: number; exit: boolean; normal?: Point2 }
     const gates: Gateway[][] = dists.map(() => []);
     let crowded = 0;
     const gradeAtP = (p: Point2) => gradeAt(cellOf(g, p[0], p[1]));
@@ -308,7 +309,9 @@ export const arterials: Stage = {
         });
         if (!placed || (placed.crowded && !required)) return false;
         if (placed.crowded) crowded++;
-        for (const k of on) gates[k].push({ at: placed.at, cand: ci, exit: c.kind === 'exit' });
+        // A crowded gateway on the very spot of another is the same gateway (a junction): one
+        // gateway twice was paired twice, and two roads came in along the same stub.
+        for (const k of on) if (!gates[k].some(x => Math.hypot(x.at[0] - placed.at[0], x.at[1] - placed.at[1]) < 2 * s.roadWidth)) gates[k].push({ at: placed.at, cand: ci, exit: c.kind === 'exit', normal: placed.normal });
         return true;
       },
     });
@@ -328,6 +331,8 @@ export const arterials: Stage = {
         if (i < Math.max(1, from) || i >= points.length - 1) return p;
         const c = cellOf(g, p[0], p[1]);
         if (g.border[c] > onBorder) return p;
+        // Not onto a border a road already runs along: two roads would lie on top of each other.
+        if (g.road[c] <= onBorder) return p;
         const a = points[i - 1], b = points[i + 1];
         const heading = Math.atan2(b[1] - a[1], b[0] - a[0]);
         if (Math.abs(Math.cos(heading - g.borderNormal[c])) > 0.5) return p; // crossing it
@@ -389,8 +394,13 @@ export const arterials: Stage = {
       const c = cands[ci];
       if (c.kind === 'river') lay([c.bridge![0], c.bridge![1]], false, links.tree.has(ci), 'bridge', false);
     }
-    const inwardOf = (k: number, at: Point2): Point2 => {
-      // Into district k, square to its border at `at`: the normal of the nearest boundary segment.
+    const inwardOf = (k: number, at: Point2, normal?: Point2): Point2 => {
+      // Into district k, square to its border at `at`: the shared border's normal where placement
+      // gave one, else the normal of the nearest boundary segment. Its side is tested a few metres
+      // out: a longer probe near a corner landed in the district from the wrong side, and both
+      // districts' stubs pointed the same way.
+      const probe = 5;
+      if (normal) return containsPoint(dists[k].geometry.footprint, [at[0] + normal[0] * probe, at[1] + normal[1] * probe]) ? normal : [-normal[0], -normal[1]];
       let best: Point2 = [0, 1], bd = Infinity;
       for (const r of dists[k].geometry.footprint.flat()) for (let i = 0; i < r.length; i++) {
         const a = r[i], b = r[(i + 1) % r.length], dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
@@ -399,7 +409,6 @@ export const arterials: Stage = {
         const d = Math.hypot(at[0] - a[0] - t * dx, at[1] - a[1] - t * dz);
         if (d < bd) { bd = d; best = [-dz / L, dx / L]; }
       }
-      const probe = Math.min(g.cell, s.usableWidth) / 2;
       return containsPoint(dists[k].geometry.footprint, [at[0] + best[0] * probe, at[1] + best[1] * probe]) ? best : [-best[0], -best[1]];
     };
     // A route that turns more than 270° all told has looped: cheaper, by the costs, than a tight
@@ -424,6 +433,21 @@ export const arterials: Stage = {
       }
       return false;
     };
+    // Most of the line already lies on a placed road (the neighbouring district laid a border
+    // road along the same border): don't lay it again on top.
+    const overlap = (line: Point2[]) => {
+      let on = 0, all = 0;
+      for (let v = 0; v + 1 < line.length; v++) {
+        const L = Math.hypot(line[v + 1][0] - line[v][0], line[v + 1][1] - line[v][1]), m = Math.max(1, Math.ceil(L / 25));
+        for (let q = 0; q < m; q++) {
+          const p: Point2 = [line[v][0] + (line[v + 1][0] - line[v][0]) * (q + 0.5) / m, line[v][1] + (line[v + 1][1] - line[v][1]) * (q + 0.5) / m];
+          all++;
+          if (roads.some(r => meets(p, r))) on++;
+        }
+      }
+      return { metres: on * 25, share: all ? on / all : 0 };
+    };
+    const covered = (line: Point2[]) => overlap(line).share > 0.5;
     const STUB = 2.5; // cells a road runs square from a gateway before routing freely
     let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0;
     const cellsOf = (r: Road) => {
@@ -445,7 +469,7 @@ export const arterials: Stage = {
       const fp = dists[k].geometry.footprint;
       const outer = fp[0][0];
       const perimeter = lineLength([...outer, outer[0]]);
-      const gateInfo = gs.map(x => ({ at: x.at, perim: perimOn([...outer, outer[0]], x.at), inward: inwardOf(k, x.at) }));
+      const gateInfo = gs.map(x => ({ at: x.at, perim: perimOn([...outer, outer[0]], x.at), inward: inwardOf(k, x.at, x.normal) }));
       const allow = (c: number) => masks[k].out.has(c);
       const inside = (x: { at: Point2; inward: Point2 }): Point2 => [x.at[0] + x.inward[0] * STUB * g.cell, x.at[1] + x.inward[1] * STUB * g.cell];
       const isExit = (i: number) => gs[i].exit;
@@ -521,7 +545,12 @@ export const arterials: Stage = {
       const pr = pairGateways(gateInfo, centres[k], perimeter, { borderShare: developed[k] ? s.borderRoads : 0, eligible, rng, star });
       const req = (i: number) => links.tree.has(gs[i].cand);
       for (const [i, j] of pr.border) {
-        lay(borderBetween(i, j), false, req(i) || req(j), 'border', false);
+        const line = borderBetween(i, j), o = overlap(line);
+        if (o.share > 0.5) continue; // both gateways are on that road already
+        // Partly on a road already (the neighbour's border road, or a through road along this
+        // border): route it across the district instead.
+        if (o.metres > s.usableWidth) { pr.through.push([i, j]); continue; }
+        lay(line, false, req(i) || req(j), 'border', false);
         borderRoads++;
       }
       for (const [i, j] of pr.through) {
@@ -536,6 +565,7 @@ export const arterials: Stage = {
           const fwd = borderBetween(i, j), back = borderBetween(j, i);
           const line = straight ? [a, b] : lineLength(fwd) <= lineLength(back) ? fwd : back;
           if (line.slice(1).some((q, v) => wetSide(line[v], q))) return false;
+          if (covered(line)) return true;
           lay(line, isExit(i) || isExit(j), req(i) || req(j), 'direct', false);
           directs++;
           return true;
@@ -553,11 +583,49 @@ export const arterials: Stage = {
         lay([...path.slice(0, -1), target, gateInfo[j].at], isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'both');
         through++;
       }
+      // Spokes to a town centre: the first reaches the centre; each later one joins the centre
+      // or a spoke already laid, whichever comes first. Routed separately they converged on the
+      // same corridor and lay on top of each other for kilometres.
+      const spokes: Road[] = [];
+      const centreCell = cellOf(g, centres[k][0], centres[k][1]);
+      const spokeCells = new Set<number>();
       for (const i of pr.star) {
-        const path = routeBetween(i, { cell: cellOf(g, centres[k][0], centres[k][1]) }, centres[k]);
+        const nearGate = (c: number) => { const [cx, cz] = centreOf(g, c); return Math.hypot(cx - gateInfo[i].at[0], cz - gateInfo[i].at[1]) < 3 * g.cell; };
+        // Any road already in the district counts too (a border road can pass the centre).
+        const own = roads.filter(r => cellsOf(r).has(centreCell) || spokes.includes(r) || (r.how === 'border' && [...cellsOf(r)].some(c => masks[k].own.has(c))));
+        const ownCells = new Set([...spokeCells, ...own.flatMap(r => [...cellsOf(r)])]);
+        const goal = ownCells.size ? { touches: (c: number) => c === centreCell || (ownCells.has(c) && !nearGate(c)) } : { cell: centreCell };
+        let path = routeBetween(i, goal, centres[k]);
         if (!path) { unreachable++; continue; }
+        if (own.length) path = joinTo(path, own);
         lay(path, isExit(i), req(i), 'star', true, 'start');
+        const laid = roads[roads.length - 1];
+        spokes.push(laid);
+        for (const c of cellsOf(laid)) spokeCells.add(c);
         stars++;
+      }
+      // A later spoke joining the first short of the centre leaves the first's last stretch a
+      // stub: cut it back to the farthest joint along it, unless something else meets its end.
+      if (spokes.length >= 2) {
+        const first = spokes[0], end = first.points[first.points.length - 1];
+        if (!roads.some(r => r !== first && meets(end, r))) {
+          let cut = -1, cutAt: Point2 | null = null;
+          for (const sp of spokes.slice(1)) {
+            const j = sp.points[sp.points.length - 1];
+            const at = perimOn(first.points, j);
+            if (at > cut) { cut = at; cutAt = j; }
+          }
+          if (cutAt && cut > 0) {
+            const kept: Point2[] = [];
+            let run = 0;
+            for (let v = 0; v < first.points.length; v++) {
+              if (v > 0) run += Math.hypot(first.points[v][0] - first.points[v - 1][0], first.points[v][1] - first.points[v - 1][1]);
+              if (run >= cut) break;
+              kept.push(first.points[v]);
+            }
+            first.points = [...kept, cutAt];
+          }
+        }
       }
       ownRoads[k].push(...roads.slice(first));
       // Tees join a road in their district once every district's roads are down.

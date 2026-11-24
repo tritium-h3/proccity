@@ -201,7 +201,9 @@ export function stepCost(g: Grid, a: number, b: number, heading: number, p: Cost
   const borderF = d <= on ? CORRIDOR : d < g.band ? 1 + 3 * (1 - across(heading, g.borderNormal[b])) : 1;
   const edgeF = 1 + 0.3 * Math.max(0, Math.min(1, 1 - d / g.edgeScale));
   const r = g.road[b];
-  const roadF = r > on && r < p.usableWidth ? 1 + 3 * (1 - across(heading, g.roadNormal[b])) : 1;
+  // Running alongside a placed road costs, and running along on top of it costs more (it was
+  // free, and two roads stacked on one corridor for kilometres). Crossing it doesn't.
+  const roadF = r < p.usableWidth ? 1 + (r <= on ? 8 : 3) * (1 - across(heading, g.roadNormal[b])) : 1;
   // Beside water, running along the bank costs (a band there spills over the water).
   const bankF = g.bank[b] < p.roadWidth / 2 + g.bankExtra ? 1 + 3 * (1 - across(heading, g.bankNormal[b])) : 1;
   return len * base * gradeF * borderF * edgeF * roadF * bankF;

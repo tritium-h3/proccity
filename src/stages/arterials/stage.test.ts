@@ -364,6 +364,35 @@ describe('arterials stage', () => {
       }
     }, 120_000);
 
+    it('never lays two roads on top of each other, nor a road back over itself', () => {
+      const W = 25;
+      const along = (pts: Point2[], step: number) => {
+        const out: { p: Point2; s: number }[] = [];
+        let run = 0;
+        for (const [ax, az, bx, bz] of lineSegs(pts)) {
+          const L = Math.hypot(bx - ax, bz - az), m = Math.max(1, Math.ceil(L / step));
+          for (let k = 0; k < m; k++) out.push({ p: [ax + (bx - ax) * k / m, az + (bz - az) * k / m], s: run + L * k / m });
+          run += L;
+        }
+        return out;
+      };
+      for (const seed of [1, 2, 3, 4, 5, 7]) {
+        const { roads } = get(seed);
+        for (const r of roads) {
+          const sm = along(r.points, 10);
+          const back = sm.find(a => sm.some(b => b.s - a.s > 6 * W && Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]) < W));
+          expect(back?.p.map(Math.round), `seed ${seed} ${r.id} comes back over itself`).toBeUndefined();
+        }
+        for (const A of roads) for (const B of roads) {
+          if (A === B) continue;
+          const ends = [A.points[0], A.points[A.points.length - 1], B.points[0], B.points[B.points.length - 1]];
+          const segs = lineSegs(B.points);
+          const on = along(A.points, 10).filter(({ p }) => !ends.some(e => Math.hypot(e[0] - p[0], e[1] - p[1]) < 4 * W) && nearest(p, segs).d < W / 2);
+          expect(on.length * 10, `seed ${seed} ${A.id} on ${B.id} from ${on[0]?.p.map(Math.round)}`).toBeLessThanOrEqual(100);
+        }
+      }
+    }, 300_000);
+
     it('keeps out of Undeveloped land where it can', () => {
       for (const seed of [1, 2, 3]) {
         const { tree, roads } = get(seed);
