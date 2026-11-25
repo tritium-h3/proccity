@@ -178,7 +178,10 @@ roads is pinned for that design.
     - Lays bridges, then each district's roads. Through roads leave and enter square, along
       an exact stub that isn't smoothed. The stub shortens where its aim point is off usable
       ground (a pond behind a bridge's bank). With no square approach at all (a gateway by
-      the edge among hills) the road arrives at an angle (`askew`), not left out.
+      the edge among hills) the road arrives at an angle (`askew`), not left out. So does one
+      whose square route is over twice the straight distance (a district too tight to turn
+      in: it swung round in a C), when arriving at an angle from either end is at least a
+      quarter shorter. Never at a bridge end or an exit.
     - A through road that meets a neighbour's road head-on at a gateway but runs beside it on
       the way (within two Usable widths for more than one) joins it where they come close,
       and the neighbour's stretch beyond the junction is cut (`merged`; the grid is re-marked,

@@ -416,7 +416,8 @@ describe('arterials stage', () => {
         // Seeds 4 and 5 had dead ends: a through road's square approach was impossible (its aim
         // point in a pond; the gateway by the site edge), and a border road was skipped as covered
         // when the neighbour's stopped 300 m short of the gateway.
-        ...[1, 2, 3, 4, 5].map(seed => ({ name: `seed ${seed}`, seed, settings: {} as Record<string, Settings>, terrainOffset: 0 })),
+        // Seed 6 had a road swinging round in a C to come into its gateway square.
+        ...[1, 2, 3, 4, 5, 6].map(seed => ({ name: `seed ${seed}`, seed, settings: {} as Record<string, Settings>, terrainOffset: 0 })),
       ];
       for (const c of cities) {
         const base = createCityDoc({ name: c.name, seed: c.seed, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...c.settings[st.id] } })) });
@@ -432,6 +433,13 @@ describe('arterials stage', () => {
         // last 500 m where they converge) for more than two Usable widths. The owner doesn't want
         // parallel arterials; seed 3 had a pair beside each other for 1.7 km.
         const through = tree.data!.roads!.filter(r => r.how === 'through');
+        // No through road more than 3× the straight line between its ends (seed 6's C was 3.2×;
+        // a bank-to-bank road between bridges facing the same way still needs a U, about 2.2×).
+        for (const r of through) {
+          const P = r.points, gap = Math.hypot(P[0][0] - P[P.length - 1][0], P[0][1] - P[P.length - 1][1]);
+          const L = P.slice(1).reduce((t, q, v) => t + Math.hypot(q[0] - P[v][0], q[1] - P[v][1]), 0);
+          expect(L, `${c.name}: ${r.id} from ${P[0].map(Math.round)}`).toBeLessThanOrEqual(Math.max(3 * gap, 1000));
+        }
         for (let a = 0; a < through.length; a++) for (let b = a + 1; b < through.length; b++) {
           const A = through[a].points, B = through[b].points;
           const shared = [A[0], A[A.length - 1]].find(p => [B[0], B[B.length - 1]].some(q => Math.hypot(p[0] - q[0], p[1] - q[1]) < 50));

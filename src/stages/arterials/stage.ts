@@ -31,6 +31,9 @@ const WILD_LINK = 3;
 // Loops must take in at least this many districts (the owner, 2026-11-24: "I don't want rings
 // around a single district border").
 const LOOP_DISTRICTS = 3;
+// A through road this many times longer than the straight line between its gateways has detoured
+// to arrive square; a route arriving at an angle is tried instead.
+const DETOUR = 2;
 
 interface Road { id: string; points: Point2[]; exit: boolean; required: boolean; how: 'through' | 'border' | 'direct' | 'tee' | 'join' | 'star' | 'bridge' | 'connector' }
 
@@ -689,9 +692,25 @@ export const arterials: Stage = {
         let path = stub > 0 ? routeBetween(i, { cell: cellOf(g, target[0], target[1]) }, target, true, Math.atan2(-gj.inward[1], -gj.inward[0]), gj.at) : null;
         if (path) {
           // Finish along gateway j's exact stub: the route ends at the target cell's centre.
-          const line = [...path.slice(0, -1), target, gj.at];
-          if (mergeParallel(line, i, j)) { through++; merged++; continue; }
-          lay(line, isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'both');
+          // Laid from its square end: `keep` holds that end's stub unsmoothed (both ends, normally).
+          let line = [...path.slice(0, -1), target, gj.at];
+          let keep: 'start' | 'both' = 'both', [a0, b0] = [i, j];
+          // Arriving square can cost a detour: in a district too tight to turn in, the road
+          // swung right round (a C 3.2× the gap, a hook 2.3×) to come into the gateway square.
+          // Then try arriving at an angle, from either end, and take it if it's much shorter.
+          // Never into a bridge: a road meets a deck square.
+          if (lineLength(line) > DETOUR * gap) {
+            const bridgeEnd = (x: number) => cands[gs[x].cand]?.kind === 'river';
+            let best: { line: Point2[]; from: number; to: number } | null = null;
+            for (const [from, to] of [[i, j], [j, i]] as const) {
+              if (bridgeEnd(to) || isExit(to)) continue;
+              const at = gateInfo[to].at, p = routeBetween(from, { cell: cellOf(g, at[0], at[1]) }, at, true);
+              if (p && (!best || lineLength(p) + 1 < lineLength(best.line))) best = { line: [...p.slice(0, -1), at], from, to };
+            }
+            if (best && lineLength(best.line) < 0.75 * lineLength(line)) { line = best.line; [a0, b0] = [best.from, best.to]; keep = 'start'; askew++; }
+          }
+          if (mergeParallel(line, a0, b0)) { through++; merged++; continue; }
+          lay(line, isExit(i) || isExit(j), req(i) || req(j), 'through', true, keep);
           through++;
           continue;
         }
