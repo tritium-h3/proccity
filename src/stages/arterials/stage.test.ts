@@ -413,7 +413,10 @@ describe('arterials stage', () => {
       };
       const cities = [
         { name: 'owner', seed: 2490576178, settings: owner, terrainOffset: 2 },
-        ...[1, 2, 3].map(seed => ({ name: `seed ${seed}`, seed, settings: {} as Record<string, Settings>, terrainOffset: 0 })),
+        // Seeds 4 and 5 had dead ends: a through road's square approach was impossible (its aim
+        // point in a pond; the gateway by the site edge), and a border road was skipped as covered
+        // when the neighbour's stopped 300 m short of the gateway.
+        ...[1, 2, 3, 4, 5].map(seed => ({ name: `seed ${seed}`, seed, settings: {} as Record<string, Settings>, terrainOffset: 0 })),
       ];
       for (const c of cities) {
         const base = createCityDoc({ name: c.name, seed: c.seed, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...c.settings[st.id] } })) });

@@ -19,7 +19,7 @@ import { pairGateways } from './inside.js';
 import { chooseLinks, type LinkCand } from './links.js';
 import { route } from './route.js';
 import { smoothRoad, tightBends } from './smooth.js';
-import { cutPiece, districtsIn, junctions, loopsOf, pointAt, project } from './loops.js';
+import { cutPiece, districtsIn, junctions, loopsOf, pointAt, project, slice } from './loops.js';
 import { slivers } from './space.js';
 
 // Distances scale with the city: the routing grid is spacing/35 (20 m at the old 700 m), but at
@@ -474,8 +474,24 @@ export const arterials: Stage = {
       return { metres: on * 25, share: all ? on / all : 0 };
     };
     const covered = (line: Point2[]) => overlap(line).share > 0.5;
+    // The stretches of a line no placed road runs along, each reaching a road width onto the
+    // covered part at either end so it meets the road there.
+    const uncovered = (line: Point2[]): Point2[][] => {
+      const L = lineLength(line), step = 25, n = Math.max(1, Math.ceil(L / step));
+      const free = Array.from({ length: n }, (_, q) => { const p = pointAt(line, ((q + 0.5) * L) / n); return !roads.some(r => meets(p, r)); });
+      const out: Point2[][] = [];
+      for (let q = 0; q < n;) {
+        if (!free[q]) { q++; continue; }
+        let e = q;
+        while (e < n && free[e]) e++;
+        const from = Math.max(0, (q * L) / n - s.roadWidth), to = Math.min(L, (e * L) / n + s.roadWidth);
+        if (to - from > s.roadWidth) out.push(slice(line, from, to));
+        q = e;
+      }
+      return out;
+    };
     const STUB = 2.5; // cells a road runs square from a gateway before routing freely
-    let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0, forks = 0;
+    let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0, forks = 0, askew = 0;
     const cellsOf = (r: Road) => {
       const out = new Set<number>();
       for (let i = 0; i + 1 < r.points.length; i++) {
@@ -578,7 +594,13 @@ export const arterials: Stage = {
       const markUsed = (...is: number[]) => { for (const i of is) used.push(gateInfo[i].at); };
       for (const [i, j] of pr.border) {
         const line = borderBetween(i, j), o = overlap(line);
-        if (o.share > 0.5) continue; // both gateways are on that road already
+        // Mostly on a road already: lay only the stretches that aren't. Skipping it whole left a
+        // gateway with a dead end where the neighbour's border road stopped 300 m short of it.
+        if (o.share > 0.5) {
+          for (const gap of uncovered(line)) { lay(gap, false, req(i) || req(j), 'border', false); borderRoads++; }
+          markUsed(i, j);
+          continue;
+        }
         // Partly on a road already (the neighbour's border road, or a through road along this
         // border): route it across the district instead.
         if (o.metres > s.usableWidth) { pr.through.push([i, j]); continue; }
@@ -612,16 +634,29 @@ export const arterials: Stage = {
         };
         // Not first for an exit: it must leave the site square-on.
         if (gap < (2 * STUB + 4) * g.cell && !isExit(i) && !isExit(j) && direct()) continue;
-        const target = inside(gateInfo[j]);
+        // Aim a stub's length inside gateway j, shortened where that lands off usable ground (in a
+        // pond behind a bridge's bank, the route had no goal at all and the road wasn't laid).
+        const gj = gateInfo[j];
+        let stub = STUB;
+        while (stub > 0 && !usable(cellOf(g, gj.at[0] + gj.inward[0] * stub * g.cell, gj.at[1] + gj.inward[1] * stub * g.cell))) stub -= 0.5;
+        const target: Point2 = [gj.at[0] + gj.inward[0] * stub * g.cell, gj.at[1] + gj.inward[1] * stub * g.cell];
         // Arrive heading into gateway j, so the stub into it carries straight on.
-        const path = routeBetween(i, { cell: cellOf(g, target[0], target[1]) }, target, true, Math.atan2(-gateInfo[j].inward[1], -gateInfo[j].inward[0]), gateInfo[j].at);
-        if (!path) {
-          if (!(gap < s.spacing && direct())) unreachable++;
+        let path = stub > 0 ? routeBetween(i, { cell: cellOf(g, target[0], target[1]) }, target, true, Math.atan2(-gj.inward[1], -gj.inward[0]), gj.at) : null;
+        if (path) {
+          // Finish along gateway j's exact stub: the route ends at the target cell's centre.
+          lay([...path.slice(0, -1), target, gj.at], isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'both');
+          through++;
           continue;
         }
-        // Finish along gateway j's exact stub: the route ends at the target cell's centre.
-        lay([...path.slice(0, -1), target, gateInfo[j].at], isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'both');
+        if (gap < s.spacing && direct()) continue;
+        // No square approach (a gateway by the site edge, among hills: every route came at it
+        // from behind, a U-turn): route to the gateway itself and arrive at an angle. Leaving the
+        // road out left dead ends on both sides of the gateway.
+        path = routeBetween(i, { cell: cellOf(g, gj.at[0], gj.at[1]) }, gj.at, true);
+        if (!path) { unreachable++; continue; }
+        lay([...path.slice(0, -1), gj.at], isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'start');
         through++;
+        askew++;
       }
       // Spokes to a town centre: the first reaches the centre; each later one joins the centre
       // or a spoke already laid, whichever comes first. Routed separately they converged on the
@@ -942,7 +977,7 @@ export const arterials: Stage = {
           loops: links.chosen.filter(i => !links.tree.has(i) && cands[i].kind !== 'exit').length,
           exits: links.chosen.filter(i => cands[i].kind === 'exit').length, bridges,
           gateways: new Set(gates.flat().map(x => `${x.at[0]},${x.at[1]}`)).size,
-          throughRoads: through, forks, localLoops, loopsOpened: opened, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
+          throughRoads: through, askew, forks, localLoops, loopsOpened: opened, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
           connectors, unreachable,
           tightCurves: roads.reduce((m, r) => m + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),
