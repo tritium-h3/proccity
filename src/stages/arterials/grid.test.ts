@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { MultiPolygon } from '../../doc/types.js';
 import { rect } from '../../grammar/polygon.js';
-import { BLOCKED, buildGrid, cellOf, LAND, markRoad, RIVER, stepCost, WILD, type GridInput } from './grid.js';
+import { BLOCKED, buildGrid, cellOf, LAND, markRoad, remarkRoads, RIVER, stepCost, WILD, type GridInput } from './grid.js';
 
 const P = { maxGrade: 0.08, roadWidth: 25, usableWidth: 60 };
 const E = 0, N = Math.PI / 2; // headings: +x, +z
@@ -68,6 +68,15 @@ describe('stepCost', () => {
     markRoad(g, [[100, 0], [100, 400]]);
     expect(step(g, 105, 105, N)).toBeGreaterThan(2 * before); // along it, on it
     expect(step(g, 95, 105, E)).toBeCloseTo(before, 5); // across it
+  });
+
+  it('forgets a road cut back: re-marking keeps only the roads given', () => {
+    const g = grid();
+    markRoad(g, [[100, 0], [100, 400]]);
+    markRoad(g, [[300, 0], [300, 400]]);
+    remarkRoads(g, [[[300, 0], [300, 400]]]);
+    expect(g.road[cellOf(g, 105, 105)]).toBeGreaterThan(60);
+    expect(g.road[cellOf(g, 305, 105)]).toBeLessThan(10);
   });
 });
 

@@ -183,6 +183,12 @@ export function markRoad(g: Grid, line: Point2[]): void {
   nearest(g, segs, g.roadReach, g.road, g.roadNormal);
 }
 
+/** Forget every placed road and mark these instead (after a road was cut back). */
+export function remarkRoads(g: Grid, lines: Point2[][]): void {
+  g.road.fill(Infinity);
+  for (const line of lines) markRoad(g, line);
+}
+
 /** How square-on a heading meets a line with the given normal: 1 straight across, 0 along. */
 const across = (heading: number, normal: number) => Math.abs(Math.cos(heading - normal));
 

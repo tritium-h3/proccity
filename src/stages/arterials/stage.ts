@@ -13,7 +13,7 @@ import { difference, intersect, offsetPolyline, union } from '../../grammar/clip
 import { area, bounds, centroid, containsPoint, simplifyLine } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
 import type { Stage } from '../types.js';
-import { BLOCKED, buildGrid, cellOf, centreOf, HILLS, isUsable, LAND, markRoad, RIVER, stepCost, WILD, type CostParams } from './grid.js';
+import { BLOCKED, buildGrid, cellOf, centreOf, HILLS, isUsable, LAND, markRoad, remarkRoads, RIVER, stepCost, WILD, type CostParams } from './grid.js';
 import { placeOnBorder, sharedBorder } from './gateways.js';
 import { pairGateways } from './inside.js';
 import { chooseLinks, type LinkCand } from './links.js';
@@ -491,7 +491,7 @@ export const arterials: Stage = {
       return out;
     };
     const STUB = 2.5; // cells a road runs square from a gateway before routing freely
-    let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0, forks = 0, askew = 0;
+    let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0, forks = 0, askew = 0, merged = 0;
     const cellsOf = (r: Road) => {
       const out = new Set<number>();
       for (let i = 0; i + 1 < r.points.length; i++) {
@@ -513,7 +513,6 @@ export const arterials: Stage = {
       const perimeter = lineLength([...outer, outer[0]]);
       const gateInfo = gs.map(x => ({ at: x.at, perim: perimOn([...outer, outer[0]], x.at), inward: inwardOf(k, x.at, x.normal) }));
       const allow = (c: number) => masks[k].out.has(c);
-      const inside = (x: { at: Point2; inward: Point2 }): Point2 => [x.at[0] + x.inward[0] * STUB * g.cell, x.at[1] + x.inward[1] * STUB * g.cell];
       const isExit = (i: number) => gs[i].exit;
       // Route from gateway i: square out of the border for a stub when the goal is well ahead,
       // else free (a stub aimed away from a nearby goal made the road loop back on itself).
@@ -608,6 +607,52 @@ export const arterials: Stage = {
         markUsed(i, j);
         borderRoads++;
       }
+      // A through road meeting a neighbour's road head-on at a gateway, but running beside it on
+      // the way there (both districts' other gateways lay the same way, so each ran along its side
+      // of the border for a kilometre or more): join the neighbour's road where they come close
+      // instead, and cut its stretch beyond the junction (it only led to the gateway). The owner
+      // doesn't want two arterials running parallel. Checked at both ends of the road.
+      const mergeParallel = (line: Point2[], i: number, j: number): boolean => {
+        const ends = ([[i, j], [j, i]] as const).map(([from, to]) => {
+          const G = gateInfo[to].at;
+          const atG = (p: Point2) => Math.hypot(p[0] - G[0], p[1] - G[1]) < 2 * s.roadWidth;
+          const R = roads.find(r => r.how !== 'bridge' && !ownRoads[k].includes(r) && (atG(r.points[0]) || atG(r.points[r.points.length - 1])));
+          if (!R || isExit(from) || isExit(to)) return null;
+          // The run beside R (within two Usable widths: 370 m apart still read as parallel to the
+          // owner), walking back from G past the stubs (both roads must converge there).
+          const ours = to === j ? line : [...line].reverse();
+          const L = lineLength(ours), step = 25;
+          let run = 0, best = 0;
+          for (let d = (2 * STUB) * g.cell; d < L; d += step) {
+            if (project(R.points, pointAt(ours, L - d)).d < 2 * s.usableWidth) { run += step; best = Math.max(best, run); } else run = 0;
+          }
+          return best > s.usableWidth ? { from, G, atG, R, best } : null;
+        }).filter(e => e !== null).sort((a, b) => b.best - a.best);
+        // A road can merge at one end only (it starts from a gateway): the longer run beside goes
+        // first. Merging whichever end came first left a 1.7 km run at the other.
+        for (const { from, G, atG, R } of ends) {
+          // R's tail: from its last junction to G. Only that stretch may be cut.
+          const rEnd = atG(R.points[R.points.length - 1]);
+          const rLine = rEnd ? R.points : [...R.points].reverse();
+          const rL = lineLength(rLine);
+          const js = junctions(rLine, roads.filter(o => o !== R).map(o => o.points), s.roadWidth);
+          const tailFrom = js.length ? js[js.length - 1] + s.roadWidth : 0;
+          const tailCells = new Set<number>();
+          for (let d = tailFrom; d <= rL; d += g.cell / 2) { const p = pointAt(rLine, d); tailCells.add(cellOf(g, p[0], p[1])); }
+          const path = routeBetween(from, { touches: c => tailCells.has(c) }, G, false);
+          if (!path) continue;
+          const joined = joinTo(path, [R]);
+          const T = joined[joined.length - 1], at = project(rLine, T).at;
+          if (at < tailFrom - s.roadWidth || at < 1) continue;
+          const kept = slice(rLine, 0, at);
+          R.points = rEnd ? kept : [...kept].reverse();
+          // The grid still held the cut stretch: a later tee aimed at it and ended in open ground.
+          remarkRoads(g, roads.map(r => r.points));
+          lay(joined, isExit(from), req(i) || req(j), 'through', true, 'start');
+          return true;
+        }
+        return false;
+      };
       for (const [i, j] of pr.through) {
         if (isUsed(i) || isUsed(j)) {
           if (!isUsed(j)) pr.tees.push(j);
@@ -644,7 +689,9 @@ export const arterials: Stage = {
         let path = stub > 0 ? routeBetween(i, { cell: cellOf(g, target[0], target[1]) }, target, true, Math.atan2(-gj.inward[1], -gj.inward[0]), gj.at) : null;
         if (path) {
           // Finish along gateway j's exact stub: the route ends at the target cell's centre.
-          lay([...path.slice(0, -1), target, gj.at], isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'both');
+          const line = [...path.slice(0, -1), target, gj.at];
+          if (mergeParallel(line, i, j)) { through++; merged++; continue; }
+          lay(line, isExit(i) || isExit(j), req(i) || req(j), 'through', true, 'both');
           through++;
           continue;
         }
@@ -977,7 +1024,7 @@ export const arterials: Stage = {
           loops: links.chosen.filter(i => !links.tree.has(i) && cands[i].kind !== 'exit').length,
           exits: links.chosen.filter(i => cands[i].kind === 'exit').length, bridges,
           gateways: new Set(gates.flat().map(x => `${x.at[0]},${x.at[1]}`)).size,
-          throughRoads: through, askew, forks, localLoops, loopsOpened: opened, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
+          throughRoads: through, askew, merged, forks, localLoops, loopsOpened: opened, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
           connectors, unreachable,
           tightCurves: roads.reduce((m, r) => m + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),

@@ -176,7 +176,13 @@ roads is pinned for that design.
       and exit links.
     - Places gateways as links are chosen.
     - Lays bridges, then each district's roads. Through roads leave and enter square, along
-      an exact stub that isn't smoothed. They stay within the district plus a Usable width
+      an exact stub that isn't smoothed. The stub shortens where its aim point is off usable
+      ground (a pond behind a bridge's bank). With no square approach at all (a gateway by
+      the edge among hills) the road arrives at an angle (`askew`), not left out.
+    - A through road that meets a neighbour's road head-on at a gateway but runs beside it on
+      the way (within two Usable widths for more than one) joins it where they come close,
+      and the neighbour's stretch beyond the junction is cut (`merged`; the grid is re-marked,
+      `remarkRoads`). The end with the longer run is merged. The owner: no parallel arterials. They stay within the district plus a Usable width
       (confined to the district, they couldn't follow the contours).
     - Every route is rejected if it loops (more than 270°), crosses itself, or makes a single
       turn over 120°; the next, freer try is taken.
@@ -194,8 +200,9 @@ roads is pinned for that design.
       loop closed by a bridge).
     - A gateway's inward direction is the shared border's normal, its side tested 5 m out (a
       longer probe near a corner pointed both districts' stubs the same way). Coincident
-      gateways merge. A border road mostly on an existing road is skipped, and one partly on
-      it is routed across instead.
+      gateways merge. A border road mostly on an existing road lays only the stretches that
+      aren't (skipping it whole left a dead end where the neighbour's stopped short), and one
+      partly on it is routed across instead.
     - Path points along a border snap onto it, unless a road already runs there. Road ids come from a counter. Bands have round
       ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
       + `water`). `data.roads` keeps the centrelines (with `how`, for diagnosis); the stats count compromises (`deadEnds`

@@ -12,7 +12,7 @@ import { STAGES } from '../index.js';
 import { districts } from '../districts/stage.js';
 import { defaultsFor, resolveAttr } from '../settings.js';
 import { terrain } from '../terrain/stage.js';
-import { districtsIn, loopsOf } from './loops.js';
+import { districtsIn, loopsOf, pointAt, project } from './loops.js';
 import { tightBends } from './smooth.js';
 import { slivers } from './space.js';
 import { arterials } from './stage.js';
@@ -428,6 +428,20 @@ describe('arterials stage', () => {
         expect(local.length, `${c.name}: loops under 3 districts at ${local.map(h => h[0].map(Math.round))}`).toBeLessThanOrEqual(1);
         expect(stats.localLoops, c.name).toBe(local.length);
         expect(stats.deadEnds, c.name).toBe(0);
+        // No two through roads sharing an end run side by side (within two Usable widths, past the
+        // last 500 m where they converge) for more than two Usable widths. The owner doesn't want
+        // parallel arterials; seed 3 had a pair beside each other for 1.7 km.
+        const through = tree.data!.roads!.filter(r => r.how === 'through');
+        for (let a = 0; a < through.length; a++) for (let b = a + 1; b < through.length; b++) {
+          const A = through[a].points, B = through[b].points;
+          const shared = [A[0], A[A.length - 1]].find(p => [B[0], B[B.length - 1]].some(q => Math.hypot(p[0] - q[0], p[1] - q[1]) < 50));
+          if (!shared) continue;
+          const ours = Math.hypot(A[0][0] - shared[0], A[0][1] - shared[1]) < 50 ? A : [...A].reverse();
+          const L = ours.slice(1).reduce((t, q, v) => t + Math.hypot(q[0] - ours[v][0], q[1] - ours[v][1]), 0);
+          let run = 0, best = 0;
+          for (let d = 500; d < L; d += 25) { if (project(B, pointAt(ours, d)).d < 600) { run += 25; best = Math.max(best, run); } else run = 0; }
+          expect(best, `${c.name}: ${through[a].id} beside ${through[b].id} from ${shared.map(Math.round)}`).toBeLessThanOrEqual(600);
+        }
       }
     }, 300_000);
 
