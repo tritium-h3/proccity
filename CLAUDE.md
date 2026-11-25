@@ -188,7 +188,8 @@ roads is pinned for that design.
       `remarkRoads`). The end with the longer run is merged. The owner: no parallel arterials. They stay within the district plus a Usable width
       (confined to the district, they couldn't follow the contours).
     - Every route is rejected if it loops (more than 270°), crosses itself, or makes a single
-      turn over 120°; the next, freer try is taken.
+      turn over 120° (also judged on the line as laid, simplified: a route curling round over a few
+      grid steps became one 134° hairpin); the next, freer try is taken.
     - Gateways too close for two stubs are joined **directly** (straight over land, else
       along the border).
     - Then each district's roads are joined up inside it (`joins`, tagged `join`): the tree

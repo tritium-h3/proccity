@@ -549,7 +549,10 @@ export const arterials: Stage = {
           const stubbed = from !== x.at || (isExit(i) && usable(cellOf(g, stubEnd[0], stubEnd[1])));
           while (stubbed && rest.length > 1 && !past(rest[0])) rest.shift();
           const full: Point2[] = stubbed ? [x.at, stubEnd, ...rest] : [x.at, ...rest];
-          if (!loops(full) && !selfCrossing(full) && !sharp(finish ? [...full, finish] : full)) return full;
+          // Sharpness is judged on the road as laid too: a route curling round over a few grid
+          // steps passed (each step under 120°), and simplifying it left one 134° hairpin.
+          const ends = finish ? [...full, finish] : full;
+          if (!loops(full) && !selfCrossing(full) && !sharp(ends) && !sharp(simplifyLine(ends, 0.6 * cellM))) return full;
         }
         return null;
       };

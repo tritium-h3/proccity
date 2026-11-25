@@ -453,6 +453,35 @@ describe('arterials stage', () => {
       }
     }, 300_000);
 
+    it('lays no hairpins (the owner\'s second city)', () => {
+      // A route curled round over a few grid steps, each under the 120° limit; simplified as laid,
+      // it was one 134° hairpin into its gateway. No vertex of a laid road turns past 120°.
+      const owner: Record<string, Settings> = {
+        terrain: { relief: 600, hilliness: 0.5, shore: 'none', river: true, riverWidth: 150, flatWidth: 2, ponds: 2, pondSize: 900, cellSize: 1800, irregularity: 0.5, regionSize: 4500 },
+        districts: { districtSize: 1800, settlements: 4, growth: 0.5 },
+        arterials: { spacing: 2000, redundancy: 0.3, borderRoads: 0.3, exits: 3, roadWidth: 25, junctionAngle: 60, curveRadius: 150, maxGrade: 8, usableWidth: 300 },
+      };
+      const base = createCityDoc({ name: 'owner 2', seed: 1420934303, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...owner[st.id] } })) });
+      const offsets: Record<string, number> = { terrain: 1, districts: 3 };
+      const doc = {
+        ...base, generatedThrough: STAGES.length - 1,
+        stages: base.stages.map(st => ({ ...st, seedOffset: offsets[st.id] ?? 0 })),
+        overrides: [
+          { id: 'a', stage: 'districts', kind: 'district', anchor: [-5846.024, 1925.729] as Point2, settings: { type: 'town-business' }, createdAt: 'a' },
+          { id: 'b', stage: 'districts', kind: 'district', anchor: [-10028.498, 634.521] as Point2, settings: { type: 'town-business' }, createdAt: 'b' },
+        ],
+      };
+      const { tree } = generate({ doc, fromStage: 0, stages: STAGES });
+      for (const r of tree.data!.roads!) {
+        const P = r.points;
+        for (let v = 1; v + 1 < P.length; v++) {
+          const ux = P[v][0] - P[v - 1][0], uz = P[v][1] - P[v - 1][1], wx = P[v + 1][0] - P[v][0], wz = P[v + 1][1] - P[v][1];
+          const cos = (ux * wx + uz * wz) / (Math.hypot(ux, uz) * Math.hypot(wx, wz));
+          expect(cos, `${r.id} (${r.how}) at ${P[v].map(Math.round)}`).toBeGreaterThanOrEqual(-0.5);
+        }
+      }
+    }, 120_000);
+
     it('keeps out of Undeveloped land where it can', () => {
       for (const seed of [1, 2, 3]) {
         const { tree, roads } = get(seed);
