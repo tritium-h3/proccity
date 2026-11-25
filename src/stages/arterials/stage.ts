@@ -19,6 +19,7 @@ import { pairGateways } from './inside.js';
 import { chooseLinks, type LinkCand } from './links.js';
 import { route } from './route.js';
 import { smoothRoad, tightBends } from './smooth.js';
+import { cutPiece, districtsIn, junctions, loopsOf, pointAt, project } from './loops.js';
 import { slivers } from './space.js';
 
 // Distances scale with the city: the routing grid is spacing/35 (20 m at the old 700 m), but at
@@ -27,6 +28,9 @@ const CELLS_PER_SPACING = 35, MAX_GRID = 300;
 const WATER = new Set(['sea', 'river', 'pond']);
 // Links touching Undeveloped land cost this much more: a road there only passes through.
 const WILD_LINK = 3;
+// Loops must take in at least this many districts (the owner, 2026-11-24: "I don't want rings
+// around a single district border").
+const LOOP_DISTRICTS = 3;
 
 interface Road { id: string; points: Point2[]; exit: boolean; required: boolean; how: 'through' | 'border' | 'direct' | 'tee' | 'join' | 'star' | 'bridge' | 'connector' }
 
@@ -444,6 +448,8 @@ export const arterials: Stage = {
       }
       return false;
     };
+    // A route crossing itself closes a loop of one road (two did, at 30 km).
+    const selfCrossing = (p: Point2[]) => junctions(p, [], 1).length > 0;
     // A single turn over 120° (a U-turn onto a stub, or into the gateway at the end).
     const sharp = (p: Point2[]) => {
       for (let i = 1; i + 1 < p.length; i++) {
@@ -469,7 +475,7 @@ export const arterials: Stage = {
     };
     const covered = (line: Point2[]) => overlap(line).share > 0.5;
     const STUB = 2.5; // cells a road runs square from a gateway before routing freely
-    let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0;
+    let unreachable = 0, through = 0, borderRoads = 0, directs = 0, tees = 0, stars = 0, forks = 0;
     const cellsOf = (r: Road) => {
       const out = new Set<number>();
       for (let i = 0; i + 1 < r.points.length; i++) {
@@ -525,7 +531,7 @@ export const arterials: Stage = {
           const stubbed = from !== x.at || (isExit(i) && usable(cellOf(g, stubEnd[0], stubEnd[1])));
           while (stubbed && rest.length > 1 && !past(rest[0])) rest.shift();
           const full: Point2[] = stubbed ? [x.at, stubEnd, ...rest] : [x.at, ...rest];
-          if (!loops(full) && !sharp(finish ? [...full, finish] : full)) return full;
+          if (!loops(full) && !selfCrossing(full) && !sharp(finish ? [...full, finish] : full)) return full;
         }
         return null;
       };
@@ -564,6 +570,12 @@ export const arterials: Stage = {
       const star = developed[k] && (dists[k].attrs.anchor === 'main' || dists[k].attrs.anchor === 'minor');
       const pr = pairGateways(gateInfo, centres[k], perimeter, { borderShare: developed[k] ? s.borderRoads : 0, eligible, rng, star });
       const req = (i: number) => links.tree.has(gs[i].cand);
+      // Gateways that already have a road in this district. Two can coincide (two links meeting
+      // at one border point); a second road out of the same point ran beside the first for
+      // kilometres, so the other end of that pair joins the nearest road instead (a fork).
+      const used: Point2[] = [];
+      const isUsed = (i: number) => used.some(p => Math.hypot(p[0] - gateInfo[i].at[0], p[1] - gateInfo[i].at[1]) < 2 * s.roadWidth);
+      const markUsed = (...is: number[]) => { for (const i of is) used.push(gateInfo[i].at); };
       for (const [i, j] of pr.border) {
         const line = borderBetween(i, j), o = overlap(line);
         if (o.share > 0.5) continue; // both gateways are on that road already
@@ -571,9 +583,17 @@ export const arterials: Stage = {
         // border): route it across the district instead.
         if (o.metres > s.usableWidth) { pr.through.push([i, j]); continue; }
         lay(line, false, req(i) || req(j), 'border', false);
+        markUsed(i, j);
         borderRoads++;
       }
       for (const [i, j] of pr.through) {
+        if (isUsed(i) || isUsed(j)) {
+          if (!isUsed(j)) pr.tees.push(j);
+          else if (!isUsed(i)) pr.tees.push(i);
+          forks++;
+          continue;
+        }
+        markUsed(i, j);
         const a = gateInfo[i].at, b = gateInfo[j].at, gap = Math.hypot(a[0] - b[0], a[1] - b[1]);
         // Gateways too close for two square stubs and a turn between them, or with no route that
         // doesn't loop: join them directly, straight if that stays in the district, else along
@@ -610,6 +630,7 @@ export const arterials: Stage = {
       const centreCell = cellOf(g, centres[k][0], centres[k][1]);
       const spokeCells = new Set<number>();
       for (const i of pr.star) {
+        if (isUsed(i)) continue;
         const nearGate = (c: number) => { const [cx, cz] = centreOf(g, c); return Math.hypot(cx - gateInfo[i].at[0], cz - gateInfo[i].at[1]) < 3 * g.cell; };
         // Any road already in the district counts too (a border road can pass the centre).
         const own = roads.filter(r => cellsOf(r).has(centreCell) || spokes.includes(r) || (r.how === 'border' && [...cellsOf(r)].some(c => masks[k].own.has(c))));
@@ -619,6 +640,7 @@ export const arterials: Stage = {
         if (!path) { unreachable++; continue; }
         if (own.length) path = joinTo(path, own);
         lay(path, isExit(i), req(i), 'star', true, 'start');
+        markUsed(i);
         const laid = roads[roads.length - 1];
         spokes.push(laid);
         for (const c of cellsOf(laid)) spokeCells.add(c);
@@ -655,6 +677,8 @@ export const arterials: Stage = {
         const at = gateInfo[i].at;
         const endsHere = (r: Road) => [r.points[0], r.points[r.points.length - 1]].some(p => Math.hypot(p[0] - at[0], p[1] - at[1]) < 2 * s.roadWidth);
         if (roads.some(r => meets(at, r) && !endsHere(r))) return;
+        // This district already has a road out of this point (a coincident gateway).
+        if (isUsed(i)) return;
         // Any road counts, in this district or not: a tee that may only join its own district's
         // roads crossed a neighbour's road to reach one just beyond it, closing a small ring.
         // Except a road ending at this same gateway (the neighbour's, waiting for this one):
@@ -719,6 +743,95 @@ export const arterials: Stage = {
       }
     }
 
+    // Open the local loops (2026-11-24-arterial-loops-design.md). The owner wants loops only
+    // through several districts: at least LOOP_DISTRICTS. Each that takes in fewer loses one piece
+    // of road along its edge (a stretch between junctions), merging it with the area beside it.
+    // Joins and tees go first, through roads last; never a bridge or an exit's piece at the site
+    // edge, and never a removal that leaves a dead end or splits the network.
+    const footprints = dists.map(d => d.geometry.footprint);
+    const ORDER: Road['how'][] = ['join', 'tee', 'connector', 'star', 'border', 'direct', 'through'];
+    const deadAt = (p: Point2, self: Road, rs: Road[]) => edgeDist(p) >= 1 && !rs.some(o => o !== self && meets(p, o));
+    const pieces = (groupsOf: Road[]) => {
+      const parent = groupsOf.map((_, i) => i);
+      const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+      for (let a = 0; a < groupsOf.length; a++) for (let b = a + 1; b < groupsOf.length; b++) if (roadsTouch(groupsOf[a], groupsOf[b], s.roadWidth)) parent[find(a)] = find(b);
+      return new Set(groupsOf.map((_, i) => find(i))).size;
+    };
+    // Which district each cell's centre is in, so a removal never leaves a district with no road
+    // (at 2 km a district's only road was a piece of a local loop).
+    const districtOfCell = new Map<number, number>();
+    masks.forEach((m, k) => { for (const c of m.own) districtOfCell.set(c, k); });
+    const served = (rs: Road[]) => new Set(rs.flatMap(r => [...cellsOf(r)].map(c => districtOfCell.get(c)).filter((k): k is number => k !== undefined)));
+    let localLoops = 0, opened = 0;
+    type Piece = { r: Road; from: number; to: number };
+    for (let guard = 0; guard < 60; guard++) {
+      const local = loopsOf(roads.map(r => r.points), s.roadWidth).filter(h => districtsIn(h, footprints, s.usableWidth).length < LOOP_DISTRICTS);
+      localLoops = local.length;
+      if (!local.length) break;
+      const before = pieces(roads), servedBefore = served(roads);
+      const cutsOf = new Map<Road, number[]>();
+      const cuts = (r: Road) => {
+        let c = cutsOf.get(r);
+        if (!c) { c = [0, ...junctions(r.points, roads.filter(o => o !== r).map(o => o.points), s.roadWidth), lineLength(r.points)]; cutsOf.set(r, c); }
+        return c;
+      };
+      const removable = (r: Road, from: number, to: number) => {
+        if (r.how === 'bridge') return false;
+        const L = cuts(r)[cuts(r).length - 1];
+        return !((from === 0 && edgeDist(r.points[0]) < 1) || (to === L && edgeDist(r.points[r.points.length - 1]) < 1));
+      };
+      // Remove a set of pieces (at most one per road), or say why not: the dead ends it leaves.
+      const attempt = (set: Piece[]) => {
+        const made = new Map<Road, Road[]>();
+        for (const c of set) made.set(c.r, cutPiece(c.r.points, c.from, c.to).filter(pt => lineLength(pt) > 1).map(pt => ({ ...c.r, points: pt })));
+        const trial = [...roads.filter(r => !made.has(r)), ...[...made.values()].flat()];
+        const fresh = new Set([...made.values()].flat());
+        // A dead end can only appear at an end that met a removed piece, or at a cut.
+        const dead = trial.flatMap(r => [r.points[0], r.points[r.points.length - 1]].map(p => ({ r, p })))
+          .filter(e => (fresh.has(e.r) || set.some(c => project(c.r.points, e.p).d < s.roadWidth)) && deadAt(e.p, e.r, trial));
+        return { made, trial, dead };
+      };
+      let done = false;
+      for (const h of local) {
+        const hb = bounds([[h]]);
+        const borders = (r: Road, from: number, to: number) => project([...h, h[0]], pointAt(r.points, (from + to) / 2)).d <= s.roadWidth / 2 + 2;
+        const near = roads.filter(r => {
+          const rb = r.points.reduce((m, p) => [Math.min(m[0], p[0]), Math.min(m[1], p[1]), Math.max(m[2], p[0]), Math.max(m[3], p[1])], [Infinity, Infinity, -Infinity, -Infinity]);
+          return !(rb[0] > hb.maxX + s.roadWidth || rb[2] < hb.minX - s.roadWidth || rb[1] > hb.maxZ + s.roadWidth || rb[3] < hb.minZ - s.roadWidth);
+        });
+        const cands: Piece[] = [];
+        for (const r of near) {
+          const c = cuts(r);
+          for (let q = 0; q + 1 < c.length; q++) if (removable(r, c[q], c[q + 1]) && borders(r, c[q], c[q + 1])) cands.push({ r, from: c[q], to: c[q + 1] });
+        }
+        cands.sort((x, y) => ORDER.indexOf(x.r.how) - ORDER.indexOf(y.r.how) || (x.to - x.from) - (y.to - y.from));
+        for (const c0 of cands) {
+          // Where the loop's edge runs through a point where two roads merely meet end to end (a
+          // gateway), removing one side's piece leaves the other's end dangling: take that road's
+          // end piece along too, as long as it also borders this loop.
+          const set: Piece[] = [c0];
+          let res = attempt(set);
+          for (let grow = 0; grow < 4 && res.dead.length; grow++) {
+            const e = res.dead.find(d => !set.some(c => c.r === d.r) && !res.made.has(d.r));
+            if (!e) break;
+            const c = cuts(e.r), atStart = Math.hypot(e.p[0] - e.r.points[0][0], e.p[1] - e.r.points[0][1]) < 1e-6;
+            const [from, to] = atStart ? [0, c[1]] : [c[c.length - 2], c[c.length - 1]];
+            if (!removable(e.r, from, to) || !borders(e.r, from, to)) break;
+            set.push({ r: e.r, from, to });
+            res = attempt(set);
+          }
+          if (res.dead.length || pieces(res.trial) > before) continue;
+          const servedAfter = served(res.trial);
+          if ([...servedBefore].some(k => !servedAfter.has(k))) continue;
+          for (const [r, parts] of res.made) roads.splice(roads.indexOf(r), 1, ...parts.map((m, q) => ({ ...m, id: q === 0 ? r.id : `road:${nextId++}` })));
+          opened++;
+          done = true;
+          break;
+        }
+        if (done) break;
+      }
+      if (!done) break;
+    }
     // Bands and their bounds, computed once per road.
     const bandCache = new Map<Road, { band: MultiPolygon; box: ReturnType<typeof bounds> }>();
     const bandInfo = (r: Road) => {
@@ -823,13 +936,13 @@ export const arterials: Stage = {
     return {
       children,
       data: new Map([[tree.id, {
-        roads: roads.map(r => ({ id: r.id, points: r.points, exit: r.exit })),
+        roads: roads.map(r => ({ id: r.id, points: r.points, exit: r.exit, how: r.how })),
         stats: {
           districts: n, links: links.chosen.length, tree: links.tree.size,
           loops: links.chosen.filter(i => !links.tree.has(i) && cands[i].kind !== 'exit').length,
           exits: links.chosen.filter(i => cands[i].kind === 'exit').length, bridges,
           gateways: new Set(gates.flat().map(x => `${x.at[0]},${x.at[1]}`)).size,
-          throughRoads: through, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
+          throughRoads: through, forks, localLoops, loopsOpened: opened, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
           connectors, unreachable,
           tightCurves: roads.reduce((m, r) => m + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),

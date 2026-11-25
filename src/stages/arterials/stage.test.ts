@@ -12,6 +12,7 @@ import { STAGES } from '../index.js';
 import { districts } from '../districts/stage.js';
 import { defaultsFor, resolveAttr } from '../settings.js';
 import { terrain } from '../terrain/stage.js';
+import { districtsIn, loopsOf } from './loops.js';
 import { tightBends } from './smooth.js';
 import { slivers } from './space.js';
 import { arterials } from './stage.js';
@@ -399,23 +400,32 @@ describe('arterials stage', () => {
       }
     }, 300_000);
 
-    it('closes no small rings: no hole under 600 m across between roads (owner\'s city)', () => {
-      // The owner's city (2026-11-23) had four loops a few hundred metres across around a
-      // town-business district's tail. Tees that could only join their own district's roads
-      // crossed a neighbour's road to reach one just beyond it, and joins between a district's
-      // own pieces ignored a neighbour's road already linking them.
-      const stageSettings: Record<string, Settings> = {
+    it('makes loops only through at least 3 districts (owner\'s city, and seeds through the pipeline)', () => {
+      // The owner (2026-11-24): loops should go through several districts, at least 3, "rather
+      // than size"; no rings around a single district border. Their city had four small rings
+      // (tees and joins closing them), and these seeds had 1–11 loops of one or two districts
+      // each. A loop that can't be opened without a dead end (one closed by a bridge) stays and is
+      // counted in the stats: at most one per city here.
+      const owner: Record<string, Settings> = {
         terrain: { relief: 600, hilliness: 0.5, shore: 'none', river: true, riverWidth: 150, flatWidth: 2, ponds: 2, pondSize: 900, cellSize: 1800, irregularity: 0.5, regionSize: 4500 },
         districts: { districtSize: 1800, settlements: 4, growth: 0.5 },
         arterials: { spacing: 2000, redundancy: 0.3, borderRoads: 0.3, exits: 3, roadWidth: 25, junctionAngle: 60, curveRadius: 150, maxGrade: 8, usableWidth: 300 },
       };
-      const base = createCityDoc({ name: 'owner', seed: 2490576178, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...stageSettings[st.id] } })) });
-      const doc = { ...base, generatedThrough: STAGES.length - 1, stages: base.stages.map(st => (st.id === 'terrain' ? { ...st, seedOffset: 2 } : st)) };
-      const { tree } = generate({ doc, fromStage: 0, stages: STAGES });
-      const roads = tree.data!.roads!;
-      const all = union(roads.flatMap(r => band(r.points, 25)), []);
-      const small = all.flatMap(poly => poly.slice(1)).filter(h => { const b = bounds([[h]]); return Math.max(b.maxX - b.minX, b.maxZ - b.minZ) < 600; });
-      expect(small.map(h => h[0].map(Math.round))).toEqual([]);
+      const cities = [
+        { name: 'owner', seed: 2490576178, settings: owner, terrainOffset: 2 },
+        ...[1, 2, 3].map(seed => ({ name: `seed ${seed}`, seed, settings: {} as Record<string, Settings>, terrainOffset: 0 })),
+      ];
+      for (const c of cities) {
+        const base = createCityDoc({ name: c.name, seed: c.seed, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...c.settings[st.id] } })) });
+        const doc = { ...base, generatedThrough: STAGES.length - 1, stages: base.stages.map(st => (st.id === 'terrain' ? { ...st, seedOffset: c.terrainOffset } : st)) };
+        const { tree } = generate({ doc, fromStage: 0, stages: STAGES });
+        const footprints = districtsOf(tree).map(d => d.geometry.footprint);
+        const local = loopsOf(tree.data!.roads!.map(r => r.points), 25).filter(h => districtsIn(h, footprints, 300).length < 3);
+        const stats = tree.data!.stats!;
+        expect(local.length, `${c.name}: loops under 3 districts at ${local.map(h => h[0].map(Math.round))}`).toBeLessThanOrEqual(1);
+        expect(stats.localLoops, c.name).toBe(local.length);
+        expect(stats.deadEnds, c.name).toBe(0);
+      }
     }, 300_000);
 
     it('keeps out of Undeveloped land where it can', () => {

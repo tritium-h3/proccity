@@ -49,7 +49,7 @@ export interface RegionData {
   /** numbers a stage reports about a region (e.g. the terrain's pondsPlaced) */
   stats?: Record<string, number>;
   /** road centrelines a stage laid (arterials, on the site); later stages branch off them */
-  roads?: { id: string; points: Point2[]; exit: boolean }[];
+  roads?: { id: string; points: Point2[]; exit: boolean; /** how it was laid (through, border, tee, join, …): for diagnosis */ how?: string }[];
 }
 
 export interface RegionNode {

@@ -126,7 +126,8 @@ roads is pinned for that design.
 - **`stages/arterials/`:** planned over **districts, by gateways**
   (`docs/superpowers/specs/2026-11-23-arterial-gateways-design.md`): links districts (every
   developed one reachable, a few loops) and divides them (superblocks). **No dead ends.**
-  Density does **not** add roads.
+  Density does **not** add roads. **Loops go through at least 3 districts**, whatever their
+  size (`2026-11-24-arterial-loops-design.md`; the owner: no rings around one district border).
   - `links.ts`: over the district graph:
     1. the cheapest spanning tree, without Undeveloped districts it merely hangs off;
     2. the exits;
@@ -148,6 +149,9 @@ roads is pinned for that design.
       district's roads crossed a neighbour's road to reach it, closing a small ring). A road
       that ends at the tee's own gateway doesn't count: joining it closes a ring back through
       the gateway.
+    - A gateway that already has a road in the district (two gateways can coincide) isn't used
+      again: the pair's other gateway becomes a tee, so the road forks rather than running
+      beside the first.
     - Town centres and lone gateways go to a central junction (**star**). Later spokes join
       the centre or any road already in the district, and the first spoke is cut back to its
       last joint (routed separately, spokes lay on top of each other for kilometres).
@@ -163,6 +167,9 @@ roads is pinned for that design.
     Options: `allow`, `goalHeading` (arrive square into a stub) and `maxCost`.
   - `smooth.ts`: simplify, then true circular arcs of the Curve radius (capped where segments
     are short; counted).
+  - `loops.ts`: the network's loops (holes in the union of road bands), the districts each takes
+    in (a usable piece left after an inward offset of half the Usable width, so a strip a road
+    strays into doesn't count), junctions along a road, and cutting a piece out of one.
   - `space.ts`: slivers (narrower than the Usable width, or tinier than its square).
   - `stage.ts`:
     - Builds the graph: border links, river links (the shortest bridge between facing banks)
@@ -171,21 +178,27 @@ roads is pinned for that design.
     - Lays bridges, then each district's roads. Through roads leave and enter square, along
       an exact stub that isn't smoothed. They stay within the district plus a Usable width
       (confined to the district, they couldn't follow the contours).
-    - Every route is rejected if it loops (more than 270°) or makes a single turn over 120°;
-      the next, freer try is taken.
+    - Every route is rejected if it loops (more than 270°), crosses itself, or makes a single
+      turn over 120°; the next, freer try is taken.
     - Gateways too close for two stubs are joined **directly** (straight over land, else
       along the border).
     - Then each district's roads are joined up inside it (`joins`, tagged `join`): the tree
       only links districts. Pieces already linked through a neighbour's road count as joined,
       and a join may end on that road. Touching is tested on the lines, not on grid cells (a
       slanted crossing slips between cells), so a join never closes a needless triangle.
+    - Then loops taking in fewer than 3 districts are **opened**: one piece of road between
+      junctions along the loop's edge is removed (joins first, then tees, …, through roads
+      last), extended through a gateway where two roads only meet end to end. Never a bridge or
+      an exit's piece at the edge, and never if it leaves a dead end, splits the network or
+      leaves a district without a road. What can't be opened is counted (`localLoops`; usually a
+      loop closed by a bridge).
     - A gateway's inward direction is the shared border's normal, its side tested 5 m out (a
       longer probe near a corner pointed both districts' stubs the same way). Coincident
       gateways merge. A border road mostly on an existing road is skipped, and one partly on
       it is routed across instead.
     - Path points along a border snap onto it, unless a road already runs there. Road ids come from a counter. Bands have round
       ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
-      + `water`). `data.roads` keeps the centrelines; the stats count compromises (`deadEnds`
+      + `water`). `data.roads` keeps the centrelines (with `how`, for diagnosis); the stats count compromises (`deadEnds`
       should be 0).
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
