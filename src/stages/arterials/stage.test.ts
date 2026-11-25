@@ -453,7 +453,7 @@ describe('arterials stage', () => {
       }
     }, 300_000);
 
-    it('lays no hairpins (the owner\'s second city)', () => {
+    it('lays no hairpins and no dead ends (the owner\'s second city)', () => {
       // A route curled round over a few grid steps, each under the 120° limit; simplified as laid,
       // it was one 134° hairpin into its gateway. No vertex of a laid road turns past 120°.
       const owner: Record<string, Settings> = {
@@ -472,6 +472,9 @@ describe('arterials stage', () => {
         ],
       };
       const { tree } = generate({ doc, fromStage: 0, stages: STAGES });
+      // Its border road ended at a gateway in open country: the neighbour's road from there was
+      // skipped as covered, bar a tiny duplicate across the corner road 13 rounded.
+      expect(tree.data!.stats!.deadEnds).toBe(0);
       for (const r of tree.data!.roads!) {
         const P = r.points;
         for (let v = 1; v + 1 < P.length; v++) {

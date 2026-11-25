@@ -479,6 +479,7 @@ export const arterials: Stage = {
     const covered = (line: Point2[]) => overlap(line).share > 0.5;
     // The stretches of a line no placed road runs along, each reaching a road width onto the
     // covered part at either end so it meets the road there.
+    const samples = (line: Point2[], step: number) => { const L = lineLength(line), m = Math.max(1, Math.ceil(L / step)); return Array.from({ length: m + 1 }, (_, q) => pointAt(line, (q * L) / m)); };
     const uncovered = (line: Point2[]): Point2[][] => {
       const L = lineLength(line), step = 25, n = Math.max(1, Math.ceil(L / step));
       const free = Array.from({ length: n }, (_, q) => { const p = pointAt(line, ((q + 0.5) * L) / n); return !roads.some(r => meets(p, r)); });
@@ -488,7 +489,13 @@ export const arterials: Stage = {
         let e = q;
         while (e < n && free[e]) e++;
         const from = Math.max(0, (q * L) / n - s.roadWidth), to = Math.min(L, (e * L) / n + s.roadWidth);
-        if (to - from > s.roadWidth) out.push(slice(line, from, to));
+        // Not a corner the road already rounds: a border has sharp corners, the road a curve of
+        // the Curve radius, so the corner looked uncovered and a tiny duplicate was laid across it
+        // (a hook, and a dead end once the road was trimmed). Any stretch staying that close to a
+        // road would run beside it anyway.
+        const gap = slice(line, from, to);
+        const beside = samples(gap, step).every(p => roads.some(r => project(r.points, p).d < s.curveRadius));
+        if (to - from > s.roadWidth && !beside) out.push(gap);
         q = e;
       }
       return out;
@@ -971,6 +978,39 @@ export const arterials: Stage = {
       lay(joinTo(path, sorted[0].map(i => roads[i])), false, true, 'connector');
       connectors++;
     }
+    // Trim dead ends: cut each back to its last junction (the owner, 2026-11-24: no dead ends).
+    // Rules that each did the right thing left ends hanging between them: a border road ending
+    // at a gateway whose neighbour's road was skipped as already covered, an impossible square
+    // approach. Never a bridge, never a cut that leaves a district with no road or splits the
+    // network. Extending a dead end instead adds road, and could bring back hairpins.
+    let trimmed = 0;
+    for (let guard = 0; guard < 40; guard++) {
+      const before = pieces(roads), servedBefore = served(roads);
+      let done = false;
+      for (const r of roads) {
+        if (r.how === 'bridge') continue;
+        for (const atStart of [true, false]) {
+          const p = atStart ? r.points[0] : r.points[r.points.length - 1];
+          if (!deadAt(p, r, roads)) continue;
+          const js = junctions(r.points, roads.filter(o => o !== r).map(o => o.points), s.roadWidth);
+          const L = lineLength(r.points);
+          // Back to the nearest junction; with none, the whole road goes (its other end then
+          // shows up as a dead end on whatever it met, if anything).
+          const kept = !js.length ? [] : [atStart ? slice(r.points, js[0], L) : slice(r.points, 0, js[js.length - 1])];
+          const trial = [...roads.filter(o => o !== r), ...kept.map(points => ({ ...r, points }))];
+          if (pieces(trial) > before) continue;
+          const servedAfter = served(trial);
+          if ([...servedBefore].some(k => !servedAfter.has(k))) continue;
+          roads.splice(roads.indexOf(r), 1, ...kept.map(points => ({ ...r, points })));
+          trimmed++;
+          done = true;
+          break;
+        }
+        if (done) break;
+      }
+      if (!done) break;
+    }
+    if (trimmed) remarkRoads(g, roads.map(r => r.points));
     // Dead ends: road ends that meet no other road and aren't on the site edge. Expected 0.
     let deadEnds = 0;
     for (const r of roads) for (const p of [r.points[0], r.points[r.points.length - 1]]) {
@@ -1046,7 +1086,7 @@ export const arterials: Stage = {
           loops: links.chosen.filter(i => !links.tree.has(i) && cands[i].kind !== 'exit').length,
           exits: links.chosen.filter(i => cands[i].kind === 'exit').length, bridges,
           gateways: new Set(gates.flat().map(x => `${x.at[0]},${x.at[1]}`)).size,
-          throughRoads: through, askew, merged, forks, localLoops, loopsOpened: opened, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
+          throughRoads: through, askew, merged, forks, localLoops, loopsOpened: opened, trimmed, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
           connectors, unreachable,
           tightCurves: roads.reduce((m, r) => m + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),

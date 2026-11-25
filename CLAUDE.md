@@ -205,8 +205,12 @@ roads is pinned for that design.
     - A gateway's inward direction is the shared border's normal, its side tested 5 m out (a
       longer probe near a corner pointed both districts' stubs the same way). Coincident
       gateways merge. A border road mostly on an existing road lays only the stretches that
-      aren't (skipping it whole left a dead end where the neighbour's stopped short), and one
-      partly on it is routed across instead.
+      aren't (skipping it whole left a dead end where the neighbour's stopped short), but not a
+      stretch staying within a Curve radius of a road (the road rounds the border's sharp corner;
+      laying the corner made a tiny duplicate), and one partly on it is routed across instead.
+    - Last, any dead end left over is cut back to its last junction (`trimmed`), whole roads
+      included, never a bridge, and never if it leaves a district with no road or splits the
+      network. Rules that each did the right thing left ends hanging between them.
     - Path points along a border snap onto it, unless a road already runs there. Road ids come from a counter. Bands have round
       ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
       + `water`). `data.roads` keeps the centrelines (with `how`, for diagnosis); the stats count compromises (`deadEnds`
