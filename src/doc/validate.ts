@@ -84,6 +84,17 @@ function checkNode(v: unknown, path: string) {
         (r.points as unknown[]).forEach((p, j) => checkPoint(p, `${at}[${i}].points[${j}]`));
       });
     }
+    if (v.data.streets !== undefined) {
+      const at = `${path}.data.streets`;
+      if (!Array.isArray(v.data.streets)) fail(at, 'should be an array of streets');
+      v.data.streets.forEach((r: unknown, i: number) => {
+        if (!isObj(r) || typeof r.id !== 'string' || (r.category !== 'C' && r.category !== 'L') || typeof r.width !== 'number' || !Array.isArray(r.points)) fail(`${at}[${i}]`, 'should be { id, points, category, width }');
+        (r.points as unknown[]).forEach((p, j) => checkPoint(p, `${at}[${i}].points[${j}]`));
+      });
+    }
+    if (v.data.blockStats !== undefined) {
+      if (!isObj(v.data.blockStats) || !Object.values(v.data.blockStats).every(x => typeof x === 'number')) fail(`${path}.data.blockStats`, 'should map names to numbers');
+    }
     if (v.data.stats !== undefined) {
       if (!isObj(v.data.stats) || !Object.values(v.data.stats).every(x => typeof x === 'number')) fail(`${path}.data.stats`, 'should map names to numbers');
     }

@@ -27,8 +27,10 @@ zone. Zones decide what the next stages build: lots, then buildings. The owner w
 - A road's category is decided **when it is cut** (its width is cut out then): a collector while
   the piece is larger than the collector spacing and both halves still fit a row of blocks on each
   side, else a local road.
-- Every road ends on a road at both ends. Cul-de-sacs (a cut ending inside the piece) only in
-  Suburban, and rare.
+- Every road meets a road at one end at least; the other meets a road or **open land** (water,
+  Undeveloped land, the site edge), so the city's outskirts stay rough. Cul-de-sacs (a cut ending
+  inside the piece) only in Suburban, and rare. *(Revised with the owner, 2026-11-25; see "Edges
+  without a road".)*
 - Two spacing families. **Sparse**: Suburban, Rural. **Dense**: Town core, Town business, Low
   urban, Urban, Financial. Sparse fields follow the contours closely; dense fields follow the
   superblock's longest edge (a grid) and turn towards the contours only where a road would
@@ -113,12 +115,25 @@ by cuts from that side back to it. In Suburban, rarely, a cut may end inside the
 
 ### Edges without a road
 
-A superblock edge on a district border with no arterial would leave cuts ending in open land
-(dead ends). A border between two developed districts gets a **shared border street**: each side
-cuts half a local road's width along it, so together they form one street. Edges on water, the
-site edge or any Undeveloped district (hills or not) stay roadless and take no cut ends.
-*(Claude's call.)* A border street runs only between points where it meets a road; a stretch that
-would run out to a roadless edge is not laid, so it never makes a dead end.
+*(Revised with the owner after the first build, 2026-11-25.)* At the 10 km defaults the arterials
+enclose little: superblocks run to 650 ha with 20–60% of their outline on an arterial, the rest on
+district borders, water and Undeveloped land. Requiring both ends of every road on a road left
+three quarters of the developed land as single blocks.
+
+- **District borders between developed districts get a shared collector**, whatever lies at its
+  ends: each side cuts half a collector's width, together one street. Every block must face a road,
+  so a district border can't be left bare.
+- **Open land** (water, Undeveloped land, the site edge) may border blocks, which meet it with a
+  rough edge. A road may end there if its other end meets a road (so no street runs from shore to
+  shore joined to nothing). Cuts meeting roads at both ends are preferred.
+- Any other roadless edge: the cut turns and follows the edge, inside the piece, to the nearest
+  road (at most two block lengths; in practice this almost never happens now).
+- A piece the planned cuts can't divide (odd shapes, a road on one side only) is cut square off
+  its road edges.
+
+Rejected: **perimeter roads along every shore and Undeveloped edge** (the owner doesn't want shore
+and park-edge roads), and **following roadless edges without limit** (it laid 50–70 km of edge road
+per city, which comes to much the same).
 
 ### Zones
 
@@ -165,6 +180,10 @@ are not editable for now.
 
 ### Scale and budget
 
+**Measured (2026-11-25, straight cuts, before terrain following):** at 10 km, seeds 1–3, 2,500–3,800
+blocks, the stage in 0.15–0.25 s in Node, saved cities 2–3 MB. At 30 km (seed 1), 17,000 blocks,
+1 s, 14 MB. The gate passes.
+
 At the 10 km default, roughly 50 km² is developed: a few thousand blocks (dense blocks around
 1–2 ha, sparse ones several). At 30 km, nine times the area, it may be tens of thousands. Targets to measure in the plan's first task
 and record here: generation time (aim: a few seconds in Node, like arterials), block count, and
@@ -185,3 +204,18 @@ sparse blocks, compact storage, a smaller default site). The plan doesn't degrad
   owns the real ones).
 - How the renderer draws local roads and collectors within the budget.
 - Seeds: per stage as usual, so regenerating blocks never disturbs arterials.
+
+## As built (2026-11-25)
+
+- **Squareness** (the owner's ask during the build): a final block fills at least 70% of its
+  oriented box (or 90% of its parent's fill, for odd superblocks), is a lot deep throughout, and
+  road ends meet at 50° or more; a traced cut meeting its road at a slant gets a short square stub.
+- **Grade** is checked on the ground smoothed over 200 m, the same surface the field steers by.
+- **Cul-de-sacs are not built.** With roads allowed to end on open land, the piece they were for
+  (no through cut fits) hardly arises; the setting was removed rather than left doing nothing.
+- **Collectors come out in pieces**, each across the piece being cut, not as long corridors.
+  Left for the owner to judge.
+- Block sizes stay at the proposed defaults (dense 70 × 160 m, sparse 120 × 400 m): the owner
+  prefers more lots per block.
+- About 5–10% of developed land is still in blocks over 20 ha, mostly steep Town core slopes where
+  no cut keeps under the 10% local grade.
