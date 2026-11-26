@@ -4,7 +4,8 @@
 
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
 import { area } from '../../grammar/polygon.js';
-import { chordThrough, obb, splitBy, type Box } from './geometry.js';
+import { offsetPolyline, union } from '../../grammar/clipper.js';
+import { chordThrough, extend, obb, offsetPath, splitBand, walkToRoad, type Box } from './geometry.js';
 import type { RoadIndex } from './roads.js';
 import type { Category, Family } from './rules.js';
 
@@ -47,6 +48,8 @@ export const targets = (ctx: DivideCtx) => (ctx.family === 'sparse'
 // A piece is cut while its side exceeds this multiple of the target; below it, it's a block.
 const SLACK = 1.4;
 const OFFSETS = [0, 0.1, -0.1, 0.2, -0.2];
+// The longest run along a roadless edge, in block lengths.
+const EDGE_RUN = 2;
 
 interface Plan { origin: Point2; across: number }
 
@@ -73,7 +76,7 @@ export function plans(box: Box, t: { depth: number; length: number }): Plan[] {
 /** Divide the pieces of one superblock (what's left after its border streets). */
 export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { streets: Street[]; strips: MultiPolygon[]; blocks: MultiPolygon[]; stats: Record<string, number> } {
   const streets: Street[] = [], strips: MultiPolygon[] = [], blocks: MultiPolygon[] = [];
-  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, rejectedCheck: 0 };
+  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, rejectedCheck: 0, edgeRuns: 0, edgeRunM: 0 };
   const queue = pieces.map(piece => ({ piece, a: area(piece) }));
   const t = targets(ctx);
   while (queue.length) {
@@ -84,27 +87,52 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
   }
   return { streets, strips, blocks, stats };
 
+  /** Try the plans' cuts. A cut ending on a roadless edge (water, Undeveloped land, the site edge)
+   *  turns and follows it inside the piece to the nearest road, so it never ends in open land; the
+   *  owner prefers that to roads round every shore. A cut from road to road wins outright, else
+   *  the one with the shortest run along an edge. */
   function tryCut(piece: MultiPolygon): boolean {
     const box = obb(piece);
+    const w = ctx.s.localWidth, maxRun = EDGE_RUN * t.length;
+    let best: { run: number; line: Point2[]; walks: (ReturnType<typeof walkToRoad>)[]; split: [MultiPolygon, MultiPolygon, MultiPolygon] } | null = null;
     for (const p of plans(box, t)) {
       const cut = ctx.cutter(piece, p.origin, p.across, ctx);
       if (!cut) continue;
       const line = cut.line;
       const ends = [line[0], line[line.length - 1]];
-      if (!ends.every(e => ctx.roads.at(e))) { stats.rejectedEnds++; continue; }
+      const walks = ends.map(e => (ctx.roads.at(e) ? null : walkToRoad(piece, e, q => !!ctx.roads.at(q), maxRun)));
+      if (walks.some((wk, i) => !wk && !ctx.roads.at(ends[i]))) { stats.rejectedEnds++; continue; }
+      const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0);
+      if (best && run >= best.run) continue;
       if (ctx.check?.(line, ctx)) { stats.rejectedCheck++; continue; }
-      const category: Category = 'L';
-      const width = ctx.s.localWidth;
-      const split = splitBy(piece, line, width);
+      // Along an edge the road lies wholly inside: a band of twice its width centred on the
+      // outline, whose outer half falls outside the piece. Its far end overshoots into the road
+      // it meets, so no corner is left between them.
+      let band = offsetPolyline(extend(line, w), w / 2, 'butt');
+      for (const wk of walks) if (wk) band = union(band, offsetPolyline(extendEnd(wk.path, w), w, 'butt'));
+      const split = splitBand(piece, band);
       if (!split) { stats.rejectedSplit++; continue; }
-      const [strip, a, b] = split;
-      if (![a, b].every(side => area(side) >= ctx.minBlockArea && obb(side).short >= ctx.minDepth)) { stats.rejectedSize++; continue; }
-      streets.push({ points: line, category: category as 'C' | 'L', width });
-      strips.push(strip);
-      ctx.roads.add({ points: line, category, half: width / 2 });
-      queue.push({ piece: a, a: area(a) }, { piece: b, a: area(b) });
-      return true;
+      if (![split[1], split[2]].every(side => area(side) >= ctx.minBlockArea && obb(side).short >= ctx.minDepth)) { stats.rejectedSize++; continue; }
+      best = { run, line, walks, split };
+      if (run === 0) break;
     }
-    return false;
+    if (!best) return false;
+    const { line, walks, split } = best;
+    const category: Category = 'L';
+    // The centreline: the cut, then each edge run half a width inside the outline.
+    const offs = walks.map(wk => (wk ? offsetPath(wk.path, (wk.side * w) / 2) : null));
+    const points: Point2[] = [...(offs[0] ? [...offs[0]].reverse() : [line[0]]), ...line.slice(1, -1), ...(offs[1] ?? [line[line.length - 1]])];
+    streets.push({ points, category: category as 'C' | 'L', width: w });
+    strips.push(split[0]);
+    ctx.roads.add({ points: line, category, half: w / 2 });
+    for (const wk of walks) if (wk) { ctx.roads.add({ points: wk.path, category, half: w }); stats.edgeRuns++; stats.edgeRunM += Math.round(wk.length); }
+    queue.push({ piece: split[1], a: area(split[1]) }, { piece: split[2], a: area(split[2]) });
+    return true;
   }
+}
+
+/** Extend only the last end of a polyline. */
+function extendEnd(line: Point2[], by: number): Point2[] {
+  const e = extend(line, by);
+  return [line[0], ...e.slice(1)];
 }

@@ -118,3 +118,68 @@ export function splitBy(piece: MultiPolygon, line: Point2[], width: number): [Mu
   if (crumbs.length) strip = union(strip, crumbs);
   return [strip, sides[0], sides[1]];
 }
+
+const EXTRA = 200; // m²: a leftover bit this small, cut off beside a road's end, joins the road
+
+/** Cut `piece` by a road band of any shape. Returns the strip and the two sides, or null unless
+ *  the band leaves exactly two real parts (bits under `EXTRA` m² join the strip). */
+export function splitBand(piece: MultiPolygon, band: MultiPolygon): [MultiPolygon, MultiPolygon, MultiPolygon] | null {
+  const rest = difference(piece, band).map(poly => ({ poly, a: area([poly]) })).sort((x, y) => y.a - x.a);
+  if (rest.length < 2 || rest[1].a < EXTRA || rest.slice(2).some(r => r.a >= EXTRA)) return null;
+  let strip = intersect(piece, band);
+  if (rest.length > 2) strip = union(strip, rest.slice(2).map(r => r.poly));
+  return [strip, [rest[0].poly], [rest[1].poly]];
+}
+
+/** From `e` on the piece's outline, follow the outline (whichever way is shorter, at most
+ *  `maxLen`) to the first point `isRoad` accepts. `side` says which side of the path the piece
+ *  lies on (+1 left), for offsetting the road inside it. */
+export function walkToRoad(piece: MultiPolygon, e: Point2, isRoad: (p: Point2) => boolean, maxLen: number, step = 5): { path: Point2[]; length: number; side: number } | null {
+  let ring: Point2[] | null = null, seg = -1, bestD = Infinity;
+  for (const poly of piece) for (const r of poly) for (let i = 0; i < r.length; i++) {
+    const a = r[i], b = r[(i + 1) % r.length];
+    const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz;
+    const t = L2 ? Math.max(0, Math.min(1, ((e[0] - a[0]) * dx + (e[1] - a[1]) * dz) / L2)) : 0;
+    const d = Math.hypot(a[0] + dx * t - e[0], a[1] + dz * t - e[1]);
+    if (d < bestD) { bestD = d; ring = r; seg = i; }
+  }
+  if (!ring) return null;
+  const n = ring.length;
+  const walk = (dir: 1 | -1) => {
+    const path: Point2[] = [e];
+    let cur = e, length = 0, v = dir === 1 ? (seg + 1) % n : seg;
+    for (let guard = 0; guard <= n; guard++) {
+      const target = ring![v];
+      const L = Math.hypot(target[0] - cur[0], target[1] - cur[1]);
+      const k = Math.max(1, Math.ceil(L / step));
+      for (let j = 1; j <= k; j++) {
+        const p: Point2 = [cur[0] + (target[0] - cur[0]) * (j - 0.5) / k, cur[1] + (target[1] - cur[1]) * (j - 0.5) / k];
+        const here = length + (L * (j - 0.5)) / k;
+        if (here > maxLen) return null;
+        // Skip the first metres: the cut's own end sits on a road edge only by coincidence.
+        if (here > step && isRoad(p)) { path.push(p); return { path, length: here }; }
+      }
+      length += L;
+      path.push(target);
+      cur = target;
+      v = (v + dir + n) % n;
+    }
+    return null;
+  };
+  const f = walk(1), b = walk(-1);
+  const best = f && (!b || f.length <= b.length) ? { ...f, side: 1 } : b ? { ...b, side: -1 } : null;
+  return best;
+}
+
+/** Shift a polyline sideways by `d` (+ left of its direction), mitring at its vertices. */
+export function offsetPath(path: Point2[], d: number): Point2[] {
+  const normals = path.slice(1).map((q, i) => {
+    const p = path[i], L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+    return [-(q[1] - p[1]) / L, (q[0] - p[0]) / L] as Point2;
+  });
+  return path.map((p, i) => {
+    const a = normals[Math.max(0, i - 1)], b = normals[Math.min(normals.length - 1, i)];
+    const mx = a[0] + b[0], mz = a[1] + b[1], dot = a[0] * mx + a[1] * mz || 1;
+    return [p[0] + (mx * d) / dot, p[1] + (mz * d) / dot];
+  });
+}
