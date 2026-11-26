@@ -50,3 +50,37 @@ describe('blocks stage', () => {
     expect(divided / developed).toBeGreaterThan(0.5);
   }, 120_000);
 });
+
+describe('zone pins', () => {
+  it('keeps a pin the rules allow and drops one they forbid', async () => {
+    const { centroid, containsPoint } = await import('../../grammar/polygon.js');
+    const tree = city(1);
+    const blocks: RegionNode[] = [];
+    walk(tree, n => { if (n.kind === 'block' && containsPoint(n.geometry.footprint, centroid(n.geometry.footprint))) blocks.push(n); });
+    const tb = blocks.find(b => b.attrs.district === 'town-business' && String(b.attrs.faces).includes('L') && b.attrs.zone !== 'HO')!;
+    const sub = blocks.find(b => b.attrs.district === 'suburban')!;
+    expect(tb && sub).toBeTruthy();
+    const base = createCityDoc({ name: 'pins', seed: 1, now: 'n', id: 'o', stages: STAGES.map(st => ({ id: st.id, defaults: defaultsFor(st.settings) })) });
+    const pin = (b: RegionNode, zone: string, k: number) => ({ id: `o${k}`, stage: 'blocks', kind: 'block', anchor: centroid(b.geometry.footprint), settings: { zone }, createdAt: `2026-11-25T00:00:0${k}Z` });
+    const res = generate({ doc: { ...base, generatedThrough: STAGES.length - 1, overrides: [pin(tb, 'HO', 1), pin(sub, 'UO', 2)] }, fromStage: 0, stages: STAGES });
+    let pinned: RegionNode | undefined;
+    walk(res.tree, n => { if (n.id === tb.id) pinned = n; });
+    expect(pinned?.attrs.zone).toBe('HO');
+    expect(res.dropped.map(d => d.override.id)).toEqual(['o2']);
+    expect(res.dropped[0].reason).toBe('invalid-setting');
+  }, 120_000);
+
+  it('zones every block by its district and the roads it faces', async () => {
+    const { zoneFits } = await import('./zones.js');
+    let zoned = 0, all = 0;
+    walk(city(1), n => {
+      if (n.kind !== 'block') return;
+      all++;
+      if (n.attrs.zone === undefined) return;
+      zoned++;
+      const faces = String(n.attrs.faces).split(',').filter(Boolean) as ('A' | 'C' | 'L')[];
+      expect(zoneFits(n.attrs.district as 'urban', faces, n.attrs.zone as 'MR'), n.id).toBe(true);
+    });
+    expect(zoned / all).toBeGreaterThan(0.8);
+  }, 120_000);
+});

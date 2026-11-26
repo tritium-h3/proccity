@@ -7,7 +7,8 @@ import type { MultiPolygon, Point2, RegionNode, Settings } from '../../doc/types
 import { difference, intersect, offsetPolyline, union } from '../../grammar/clipper.js';
 import { area, bounds, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
-import type { DistrictType } from '../districts/rules.js';
+import { TYPE_LABEL, type DistrictType } from '../districts/rules.js';
+import { createRng } from '../../pipeline/seeds.js';
 import type { Stage } from '../types.js';
 import { divideSuperblock, type BlockSettings, type DivideCtx, type Street } from './divide.js';
 import { classifyBoundary, runsOf } from './edges.js';
@@ -15,7 +16,8 @@ import { makeField } from './field.js';
 import { heightRaster } from './height.js';
 import { extend } from './geometry.js';
 import { RoadIndex } from './roads.js';
-import { familyOf, smallestLot, type Developed } from './rules.js';
+import { DISTRICT_ZONES, FACES, familyOf, smallestLot, ZONES, type Category, type Developed, type Zone } from './rules.js';
+import { facesOf, pickZone, zoneFits } from './zones.js';
 
 const PROBE = 2; // m beyond an outline edge, to see what's on the other side
 const CRUMB = 100; // m²
@@ -38,7 +40,23 @@ export const blocks: Stage = {
     { key: 'culDeSacs', label: 'Cul-de-sacs', type: 'number', min: 0, max: 0.3, step: 0.01, default: 0.05, help: 'Share of Suburban pieces that may end in one when no road crosses them' },
   ],
 
+  overridable: {
+    block: [{ key: 'zone', label: 'Zone', type: 'choice', default: 'LR', options: ZONES.map(z => ({ value: z, label: z })) }],
+  },
+
+  // A pin holds only where the generator could have picked it: the district allows the zone and the
+  // block borders a road its lots may face.
+  validateOverride(node, key, value) {
+    if (node.kind !== 'block' || key !== 'zone' || typeof value !== 'string') return null;
+    const t = node.attrs.district as DistrictType, faces = String(node.attrs.faces ?? '').split(',').filter(Boolean) as Category[];
+    if (t === 'undeveloped' || !DISTRICT_ZONES[t].includes(value as Zone)) return `${value} in a ${TYPE_LABEL[t]} district`;
+    if (!zoneFits(t, faces, value as Zone)) return `${value} here (its lots face ${FACES[value as Zone].join(' or ')} roads; this block borders ${faces.join(', ') || 'none'})`;
+    return null;
+  },
+
   run({ tree, leaves, settings, rng, attr }) {
+    // Zones draw from their own stream, one value per block in id order, so cuts never shift them.
+    const zoneRng = createRng(Math.floor(rng() * 2 ** 32));
     const t0 = performance.now();
     const s = settings as Settings & BlockSettings;
     const children = new Map<string, RegionNode[]>();
@@ -52,7 +70,7 @@ export const blocks: Stage = {
     for (const r of tree.data?.roads ?? []) roads.add({ points: r.points, category: 'A', half: arterialHalf });
 
     const streets: StreetData[] = [];
-    const stats: Record<string, number> = { superblocks: 0, blocks: 0, collectors: 0, locals: 0, borderStreets: 0, withCollectors: 0, roadless: 0, roadlessHa: 0 };
+    const stats: Record<string, number> = { superblocks: 0, blocks: 0, collectors: 0, locals: 0, borderStreets: 0, withCollectors: 0, unzoned: 0, zoneRestricted: 0, roadless: 0, roadlessHa: 0 };
     const superblocks = leaves
       .filter(n => n.kind === 'superblock' && attr(n, 'type') !== 'undeveloped')
       .sort((a, b) => a.id.localeCompare(b.id));
@@ -140,7 +158,14 @@ export const blocks: Stage = {
         stats[st.category === 'C' ? 'collectors' : 'locals']++;
       });
       if (out.streets.some(st => st.category === 'C')) stats.withCollectors++;
-      out.blocks.forEach((b, i) => kids.push(node(`block:${i}`, 'block', b, { district: type as DistrictType })));
+      out.blocks.forEach((b, i) => {
+        const faces = facesOf(b, roads);
+        const { zone, restricted } = pickZone(type, faces, zoneRng());
+        const attrs: Settings = { district: type, faces: faces.join(',') };
+        if (zone) { attrs.zone = zone; stats[`zone:${zone}`] = (stats[`zone:${zone}`] ?? 0) + 1; } else stats.unzoned++;
+        if (restricted) stats.zoneRestricted++;
+        kids.push(node(`block:${i}`, 'block', b, attrs));
+      });
       stats.blocks += out.blocks.length;
       children.set(sb.id, kids);
     }
