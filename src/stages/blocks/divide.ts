@@ -10,7 +10,7 @@ import type { Field } from './field.js';
 import type { HeightRaster } from './height.js';
 import type { RoadIndex } from './roads.js';
 import { traceCut } from './trace.js';
-import type { Category, Family } from './rules.js';
+import type { Family } from './rules.js';
 
 export interface BlockSettings {
   collectorWidth: number; localWidth: number;
@@ -99,6 +99,8 @@ const OFFSETS = [0, 0.1, -0.1, 0.2, -0.2];
 const EDGE_RUN = 2;
 // An end on open land, in metres of edge run: a road-to-road cut nearby is preferred.
 const OPEN_COST = 100;
+// A local road's end on an arterial, in metres of edge run: collectors and locals are preferred.
+const ARTERIAL_COST = 40;
 
 interface Plan { origin: Point2; across: number }
 
@@ -125,7 +127,7 @@ export function plans(box: Box, t: { depth: number; length: number }): Plan[] {
 /** Divide the pieces of one superblock (what's left after its border streets). */
 export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { streets: Street[]; strips: MultiPolygon[]; blocks: MultiPolygon[]; stats: Record<string, number> } {
   const streets: Street[] = [], strips: MultiPolygon[] = [], blocks: MultiPolygon[] = [];
-  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, rejectedCheck: 0, rejectedThin: 0, rejectedSquare: 0, rejectedAngle: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0 };
+  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, collectorsSkipped: 0, rejectedCheck: 0, rejectedThin: 0, rejectedSquare: 0, rejectedAngle: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0 };
   const queue = pieces.map(piece => ({ piece, a: area(piece) }));
   const t = targets(ctx);
   while (queue.length) {
@@ -141,16 +143,32 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
    *  roadless edge turns and follows it inside the piece to the nearest road. A cut from road to
    *  road wins outright; otherwise the cheapest, an open end counting as `OPEN_COST` metres of
    *  edge run. */
+  /** A collector while the piece is longer than the collector spacing and both halves still hold
+   *  a row of blocks each side of a local road; a local road otherwise, or if no collector fits. */
   function tryCut(piece: MultiPolygon): boolean {
     const box = obb(piece);
-    const w = ctx.s.localWidth, maxRun = EDGE_RUN * t.length;
+    if (box.long > t.collectors) {
+      if (tryAs(piece, box, 'C')) return true;
+      stats.collectorsSkipped++;
+    }
+    return tryAs(piece, box, 'L');
+  }
+
+  function tryAs(piece: MultiPolygon, box: Box, category: 'C' | 'L'): boolean {
+    const w = category === 'C' ? ctx.s.collectorWidth : ctx.s.localWidth, maxRun = EDGE_RUN * t.length;
+    const minSide = category === 'C' ? 2 * t.depth + ctx.s.localWidth : 0;
     let best: { run: number; line: Point2[]; walks: (ReturnType<typeof walkToRoad>)[]; split: [MultiPolygon, MultiPolygon, MultiPolygon] } | null = null;
     for (let line of candidates(piece, box, ctx, t)) {
       const ends = [line[0], line[line.length - 1]];
       const onRoad = ends.map(e => !!ctx.roads.at(e)), open = ends.map((e, i) => !onRoad[i] && ctx.openAt(e));
       const walks = ends.map((e, i) => (onRoad[i] || open[i] ? null : walkToRoad(piece, e, q => !!ctx.roads.at(q), maxRun)));
       if (walks.some((wk, i) => !wk && !onRoad[i] && !open[i]) || open.every(o => o)) { stats.rejectedEnds++; continue; }
-      const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0) + open.filter(o => o).length * OPEN_COST;
+      // Collectors take traffic from arterials and other collectors: both ends on a road, one of
+      // them an A or C. Locals may meet arterials, but it's disfavoured.
+      const cats = ends.map(e => ctx.roads.at(e)?.category);
+      if (category === 'C' && (!onRoad.every(o => o) || !cats.some(c => c === 'A' || c === 'C'))) { stats.rejectedEnds++; continue; }
+      const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0) + open.filter(o => o).length * OPEN_COST
+        + (category === 'L' ? cats.filter(c => c === 'A').length * ARTERIAL_COST : 0);
       if (best && run >= best.run) continue;
       // A traced cut meeting its road at a slant gets a short square stub there instead.
       for (const i of [0, 1]) if (onRoad[i] && !squareEnds(piece, line, i === 0 ? [true, false] : [false, true])) {
@@ -168,6 +186,7 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
       if (!split) { stats.rejectedSplit++; continue; }
       if (![split[1], split[2]].every(side => area(side) >= ctx.minBlockArea && obb(side).short >= ctx.minDepth)) { stats.rejectedSize++; continue; }
       if (![split[1], split[2]].every(side => solid(side, ctx.minDepth))) { stats.rejectedThin++; continue; }
+      if (minSide && ![split[1], split[2]].every(side => obb(side).short >= minSide)) { stats.rejectedSize++; continue; }
       // Squareness (the owner's ask): no wedge-shaped blocks. Only sides small enough to be blocks
       // are judged (bigger ones are cut again); each fills most of its box, or at least isn't much
       // worse than the piece it came from (superblocks can be odd shapes to begin with).
@@ -179,11 +198,10 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
     if (!best) return false;
     const { line, walks, split } = best;
     stats.openEnds += [line[0], line[line.length - 1]].filter(e => !ctx.roads.at(e) && ctx.openAt(e)).length;
-    const category: Category = 'L';
     // The centreline: the cut, then each edge run half a width inside the outline.
     const offs = walks.map(wk => (wk ? offsetPath(wk.path, (wk.side * w) / 2) : null));
     const points: Point2[] = [...(offs[0] ? [...offs[0]].reverse() : [line[0]]), ...line.slice(1, -1), ...(offs[1] ?? [line[line.length - 1]])];
-    streets.push({ points, category: category as 'C' | 'L', width: w });
+    streets.push({ points, category, width: w });
     strips.push(split[0]);
     ctx.roads.add({ points: line, category, half: w / 2 });
     for (const wk of walks) if (wk) { ctx.roads.add({ points: wk.path, category, half: w }); stats.edgeRuns++; stats.edgeRunM += Math.round(wk.length); }

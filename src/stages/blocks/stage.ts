@@ -52,7 +52,7 @@ export const blocks: Stage = {
     for (const r of tree.data?.roads ?? []) roads.add({ points: r.points, category: 'A', half: arterialHalf });
 
     const streets: StreetData[] = [];
-    const stats: Record<string, number> = { superblocks: 0, blocks: 0, collectors: 0, locals: 0, borderStreets: 0, roadless: 0, roadlessHa: 0 };
+    const stats: Record<string, number> = { superblocks: 0, blocks: 0, collectors: 0, locals: 0, borderStreets: 0, withCollectors: 0, roadless: 0, roadlessHa: 0 };
     const superblocks = leaves
       .filter(n => n.kind === 'superblock' && attr(n, 'type') !== 'undeveloped')
       .sort((a, b) => a.id.localeCompare(b.id));
@@ -139,6 +139,7 @@ export const blocks: Stage = {
         addStreet(st, out.strips[i], true);
         stats[st.category === 'C' ? 'collectors' : 'locals']++;
       });
+      if (out.streets.some(st => st.category === 'C')) stats.withCollectors++;
       out.blocks.forEach((b, i) => kids.push(node(`block:${i}`, 'block', b, { district: type as DistrictType })));
       stats.blocks += out.blocks.length;
       children.set(sb.id, kids);
