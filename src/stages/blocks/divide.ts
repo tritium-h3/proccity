@@ -39,12 +39,21 @@ export interface DivideCtx {
 }
 
 /** Why a cut's line won't do as a road, or null: a turn over 120° (also on the line simplified as
- *  laid, since a curl over a few steps reads as one hairpin), crossing itself, or a stretch steeper
- *  than the Max grade, on the smoothed ground the field steers by (the raw terrain is big flat
- *  facets with creases that no road could follow smoothly). */
+ *  laid, since a curl over a few steps reads as one hairpin), crossing itself, or a stretch
+ *  steeper than `HARD_GRADE` × the Max grade. */
 export function badLine(line: Point2[], ctx: DivideCtx): string | null {
   for (const l of [line, simplifyLine(line, KINK_TOL)]) if (sharpTurn(l)) return 'kink';
   if (crosses(simplifyLine(line, 0.5))) return 'crossing';
+  if (gradeCost(line, ctx) === Infinity) return 'grade';
+  return null;
+}
+
+/** The Max grade is a preference, not a rule (the owner, after Town cores on slopes stayed as
+ *  single 100 ha blocks): a stretch over it costs its length × how far over, in Max grades, and
+ *  only past `HARD_GRADE` × the Max grade is it refused. Measured on the smoothed ground the field
+ *  steers by (the raw terrain is big flat facets with creases no road could follow smoothly). */
+export function gradeCost(line: Point2[], ctx: DivideCtx): number {
+  let cost = 0;
   if (ctx.height) {
     const g = ctx.s.localGrade / 100;
     let prev = line[0], prevH = ctx.height.smoothAt(...prev), run = 0;
@@ -57,17 +66,20 @@ export function badLine(line: Point2[], ctx: DivideCtx): string | null {
         prev = q;
         if (run < GRADE_STEP) continue;
         const h = ctx.height.smoothAt(...q);
-        if (Math.abs(h - prevH) / run > g * GRADE_SLACK) return 'grade';
+        const grade = Math.abs(h - prevH) / run;
+        if (grade > g * HARD_GRADE) return Infinity;
+        if (grade > g) cost += run * ((grade - g) / g) * GRADE_COST;
         prevH = h; run = 0;
       }
     }
   }
-  return null;
+  return cost;
 }
 const KINK_TOL = 6;
 const GRADE_STEP = 20;
-// The raster interpolates a coarse surface: a little over the limit on one 20 m stretch is noise.
-const GRADE_SLACK = 1.15;
+export const HARD_GRADE = 3;
+// Metres of cost per metre of road one Max grade over it: a little steepness beats an open end.
+const GRADE_COST = 2;
 
 function sharpTurn(l: Point2[]): boolean {
   for (let i = 1; i + 1 < l.length; i++) {
@@ -170,12 +182,16 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
       const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0) + open.filter(o => o).length * OPEN_COST
         + (category === 'L' ? cats.filter(c => c === 'A').length * ARTERIAL_COST : 0);
       if (best && run >= best.run) continue;
-      // A traced cut meeting its road at a slant gets a short square stub there instead.
+      // A traced cut meeting its road at a slant gets a short square stub there instead, unless
+      // the stub itself is too steep (on very steep ground it points straight up the slope).
       for (const i of [0, 1]) if (onRoad[i] && !squareEnds(piece, line, i === 0 ? [true, false] : [false, true])) {
         const fixed = squareStub(piece, i === 0 ? line : [...line].reverse(), STUB);
-        if (fixed) line = i === 0 ? fixed : fixed.reverse();
+        const stubbed = fixed && (i === 0 ? fixed : fixed.reverse());
+        if (stubbed && gradeCost(stubbed, ctx) !== Infinity) line = stubbed;
       }
       { const why = badLine(line, ctx); if (why) { stats.rejectedCheck++; stats[`rejected_${why}`] = (stats[`rejected_${why}`] ?? 0) + 1; continue; } }
+      const cost = run + gradeCost(line, ctx);
+      if (best && cost >= best.run) continue;
       if (!squareEnds(piece, line, onRoad)) { stats.rejectedAngle++; continue; }
       // Along an edge the road lies wholly inside: a band of twice its width centred on the
       // outline, whose outer half falls outside the piece. Its far end overshoots into the road
@@ -185,15 +201,22 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
       const split = splitBand(piece, band);
       if (!split) { stats.rejectedSplit++; continue; }
       if (![split[1], split[2]].every(side => area(side) >= ctx.minBlockArea && obb(side).short >= ctx.minDepth)) { stats.rejectedSize++; continue; }
-      if (![split[1], split[2]].every(side => solid(side, ctx.minDepth))) { stats.rejectedThin++; continue; }
+      // A lot deep throughout: judged on every side narrow enough that it won't be cut along its
+      // length again (later cuts only shorten it, so a thin strip stays thin). A wider side is
+      // exempt: an odd superblock's leftover has tails until it's cut down. Width from area and
+      // outline: a curved strip's box is far wider than the strip, and it slipped through.
+      // A side is judged against the piece it came from: a wedge left by a border street can't be
+      // cut into anything better than itself, and refusing that left kilometre-long strips.
+      const parent = solidity(piece, ctx.minDepth);
+      if (![split[1], split[2]].every(side => rectWidth(side) > SLACK * t.depth || asSolid(solidity(side, ctx.minDepth), parent))) { stats.rejectedThin++; continue; }
       if (minSide && ![split[1], split[2]].every(side => obb(side).short >= minSide)) { stats.rejectedSize++; continue; }
       // Squareness (the owner's ask): no wedge-shaped blocks. Only sides small enough to be blocks
       // are judged (bigger ones are cut again); each fills most of its box, or at least isn't much
       // worse than the piece it came from (superblocks can be odd shapes to begin with).
       const need = Math.min(SQUARE, SQUARE_KEEP * fill(piece));
       if (![split[1], split[2]].every(side => plans(obb(side), t).length > 0 || fill(side) >= need)) { stats.rejectedSquare++; continue; }
-      best = { run, line, walks, split };
-      if (run === 0) break;
+      best = { run: cost, line, walks, split };
+      if (cost === 0) break;
     }
     if (!best) return false;
     const { line, walks, split } = best;
@@ -248,9 +271,29 @@ const TRACE_STEP = 10;
  *  back it keeps most of its area. Converging streamlines cut wedges and long thin tails that a
  *  box or area test passes. */
 export function solid(piece: MultiPolygon, depth: number): boolean {
+  const s = solidity(piece, depth);
+  return s.cores === 1 && s.ratio >= SOLID;
+}
+
+/** How many pieces it shrinks to (by half a lot depth), and how much of it grows back. */
+export function solidity(piece: MultiPolygon, depth: number): { cores: number; ratio: number } {
   const core = offsetPolygons(piece, -depth / 2);
-  if (core.length !== 1) return false;
-  return area(offsetPolygons(core, depth / 2)) >= SOLID * area(piece);
+  const a = area(piece);
+  return { cores: core.length, ratio: core.length && a > 0 ? area(offsetPolygons(core, depth / 2)) / a : 0 };
+}
+
+/** The width of the rectangle with this area and outline: a strip's width, however it curves. */
+export function rectWidth(piece: MultiPolygon): number {
+  let per = 0;
+  for (const poly of piece) for (const ring of poly) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) per += Math.hypot(ring[i][0] - ring[j][0], ring[i][1] - ring[j][1]);
+  const a = area(piece);
+  return (per - Math.sqrt(Math.max(0, per * per - 16 * a))) / 4;
+}
+
+/** Solid, or at least no worse than its parent (less a little). */
+function asSolid(side: { cores: number; ratio: number }, parent: { cores: number; ratio: number }): boolean {
+  if (side.cores === 1 && side.ratio >= SOLID) return true;
+  return side.cores >= 1 && side.cores <= Math.max(1, parent.cores) && side.ratio >= Math.min(SOLID, parent.ratio - 0.05);
 }
 const SOLID = 0.85;
 

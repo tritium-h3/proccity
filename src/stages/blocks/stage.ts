@@ -10,7 +10,7 @@ import { makeSlab } from '../../grammar/slab.js';
 import { TYPE_LABEL, type DistrictType } from '../districts/rules.js';
 import { createRng } from '../../pipeline/seeds.js';
 import type { Stage } from '../types.js';
-import { divideSuperblock, type BlockSettings, type DivideCtx, type Street } from './divide.js';
+import { divideSuperblock, HARD_GRADE, type BlockSettings, type DivideCtx, type Street } from './divide.js';
 import { classifyBoundary, runsOf } from './edges.js';
 import { makeField } from './field.js';
 import { heightRaster } from './height.js';
@@ -127,7 +127,7 @@ export const blocks: Stage = {
       const lot = smallestLot(type);
       const ctx: DivideCtx = {
         family: familyOf(type), s, minBlockArea: lot.area, minDepth: lot.depth, rng, roads,
-        field: makeField(height, familyOf(type), s.localGrade / 100), height,
+        field: makeField(height, familyOf(type), s.localGrade / 100, (HARD_GRADE * s.localGrade) / 100), height,
         openAt: p => !!borders.get(sb.id)!.open.at(p),
       };
       const border = borders.get(sb.id)!;

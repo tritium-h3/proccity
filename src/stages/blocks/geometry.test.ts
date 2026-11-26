@@ -74,3 +74,13 @@ describe('solid pieces', () => {
     expect(solid([[[[0, 0], [160, 0], [160, 70], [100, 70], [100, 370], [90, 370], [90, 70], [0, 70]]]], 30)).toBe(false);
   });
 });
+
+describe('strip width', () => {
+  it('measures a rectangle and a curved strip by their width', async () => {
+    const { rectWidth } = await import('./divide.js');
+    const { offsetPolyline } = await import('../../grammar/clipper.js');
+    expect(rectWidth(rect(0, 0, 160, 70))).toBeCloseTo(70, 6);
+    const arc: [number, number][] = Array.from({ length: 50 }, (_, i) => [600 * Math.cos(i / 49), 600 * Math.sin(i / 49)]);
+    expect(rectWidth(offsetPolyline(arc, 15))).toBeCloseTo(30, 0);
+  });
+});

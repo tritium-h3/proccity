@@ -241,12 +241,17 @@ Lots come next.
     collector spacing and both halves hold two rows of blocks, else a local road. A road meets a
     road at one end at least; the other may end on open land. Candidates: each planned line (every
     stretch across an odd shape), traced along the field, then straight, then square off the
-    piece's road edges. Rejected: kinks over 120°, self-crossing, over the local Max grade, a side
-    under a lot (`smallestLot`), not a lot deep throughout (`solid`: erode, dilate), and, the
-    owner's ask, wedges: a final block fills 70% of its box, and a road end meets at 50°+ (a
-    slanted traced end gets a square stub instead).
-  - `field.ts` / `trace.ts`: dense cuts keep the plan's direction and turn to the contours only as
-    far as the grade needs; sparse ones follow the contours. `height.ts` rasterises the terrain's
+    piece's road edges. **The local Max grade is a preference** (`gradeCost`, the owner, after
+    slope Town cores stayed as 100 ha blocks): metres over it cost, and only past 3× it is a road
+    refused. Rejected: kinks over 120°, self-crossing, a side under a lot (`smallestLot`), a side
+    narrow enough not to be cut lengthwise again (`rectWidth`, from area and outline: curved
+    strips fooled the box) that isn't a lot deep throughout (`solidity`: erode, dilate; no worse
+    than its parent will do), and, the owner's ask, wedges: a final block fills 70% of its box,
+    and a road end meets at 50°+ (a slanted traced end gets a square stub, if not too steep).
+  - `field.ts` / `trace.ts`: dense cuts keep the plan's direction; sparse ones follow the
+    contours. Over the Max grade a line bends towards the contour up to 30°, else snaps to the
+    contour grid (along, or straight up: square blocks, short steep streets); past the 3× ceiling
+    it runs on the diagonal at the ceiling. `height.ts` rasterises the terrain's
     triangles once (`groundHeightAt` per query was far too slow); slope **and the grade check**
     use it smoothed over 200 m (the terrain's facets kinked every streamline).
   - `zones.ts`: a block's faces are the road categories along its outline (`roads.ts` indexes
