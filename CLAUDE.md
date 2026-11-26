@@ -216,8 +216,13 @@ roads is pinned for that design.
       stretch staying within a Curve radius of a road (the road rounds the border's sharp corner;
       laying the corner made a tiny duplicate), and one partly on it is routed across instead.
     - Last, any dead end left over is cut back to its last junction (`trimmed`), whole roads
-      included, never a bridge, and never if it leaves a district with no road or splits the
-      network. Rules that each did the right thing left ends hanging between them.
+      included, never a bridge, and never if it leaves a district with no road (one it runs
+      along counts), splits the network or leaves another road's end dangling. Rules that each
+      did the right thing left ends hanging between them. A dead end the trim must leave (its
+      district's only road) carries on to the nearest other road (`extended`, tagged
+      `extension`), straight on first, then free to turn, never crossing itself or making a
+      hairpin. That always closes a loop, often a small one: the owner (2026-11-25) prefers rare
+      small loops to dead ends. The grid is re-marked first (removed pieces were still on it).
     - Path points along a border snap onto it, unless a road already runs there. Road ids come from a counter. Bands have round
       ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
       + `water`). `data.roads` keeps the centrelines (with `how`, for diagnosis); the stats count compromises (`deadEnds`

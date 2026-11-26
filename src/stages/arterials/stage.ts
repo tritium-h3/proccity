@@ -1005,6 +1005,10 @@ export const arterials: Stage = {
           const kept = !js.length ? [] : [atStart ? slice(r.points, js[0], L) : slice(r.points, 0, js[js.length - 1])];
           const trial = [...roads.filter(o => o !== r), ...kept.map(points => ({ ...r, points }))];
           if (pieces(trial) > before) continue;
+          // Never leave another road's end dangling: cutting a spoke whole stranded the tee that
+          // met it, and that end then doubled back beside the tee.
+          const ends = (rs: Road[]) => rs.filter(o => o !== r).flatMap(o => [o.points[0], o.points[o.points.length - 1]].map(e => ({ o, e })));
+          if (ends(trial).some(({ o, e }) => deadAt(e, o, trial) && !deadAt(e, o, roads))) continue;
           const servedAfter = servedBy(trial);
           if ([...servedBefore].some(k => !servedAfter.has(k))) continue;
           roads.splice(roads.indexOf(r), 1, ...kept.map(points => ({ ...r, points })));
@@ -1041,7 +1045,9 @@ export const arterials: Stage = {
           const j = joinTo(path, roads.filter(o => o !== r));
           if (!roads.some(o => o !== r && meets(j[j.length - 1], o))) continue;
           const whole = [...tail, ...j.slice(1)];
-          if (loops(whole) || selfCrossing(whole) || sharp(whole) || sharp(simplifyLine(whole, 0.6 * cellM))) continue;
+          // No 270° limit here: reaching another road may mean turning right round (the owner,
+          // 2026-11-25: rare small loops are fine, dead ends aren't). No crossing or hairpin, though.
+          if (selfCrossing(whole) || sharp(whole) || sharp(simplifyLine(whole, 0.6 * cellM))) continue;
           joined = j;
           break;
         }

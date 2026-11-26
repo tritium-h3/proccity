@@ -485,6 +485,19 @@ describe('arterials stage', () => {
       }
     }, 120_000);
 
+    it('leaves no dead ends at the 10 km defaults', () => {
+      // Seed 1: a Town core's spoke stub past the tee that met it, its district's only road. Seed
+      // 3: a border road stopping partway. Trimming either stranded a district, so each carries
+      // on to the nearest road instead (a small loop: the owner prefers it to a dead end).
+      for (const seed of [1, 3]) {
+        const base = createCityDoc({ name: `seed ${seed}`, seed, now: 'n', id: 'o', stages: STAGES.map(st => ({ id: st.id, defaults: defaultsFor(st.settings) })) });
+        const { tree } = generate({ doc: { ...base, generatedThrough: STAGES.length - 1 }, fromStage: 0, stages: STAGES });
+        const stats = tree.data!.stats!;
+        expect(stats.deadEnds, `seed ${seed}`).toBe(0);
+        expect(stats.extended, `seed ${seed}`).toBeGreaterThan(0);
+      }
+    }, 120_000);
+
     it('keeps out of Undeveloped land where it can', () => {
       for (const seed of [1, 2, 3]) {
         const { tree, roads } = get(seed);
