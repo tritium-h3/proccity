@@ -25,15 +25,15 @@ The full list of zones is:
 * *LR* low density residential. Ex: single-family homes.
 * *LC* low density commercial. Ex: small stores with ample parking.
 * *LO* low density office. Ex: small offices with ample parking.
-* *HR* kigh density residential. Ex: small-lot single-occupancy houses, duplexes+, townhomes.
+* *HR* high density residential. Ex: small-lot single-occupancy houses, duplexes+, townhomes.
 * *HC* high density commercial. Ex: small stores with street parking.
 * *HO* high density office. Ex: small offices with street parking.
 * *HCR* high density mixed commercial/residential. Ex: small stores with apartments.
-* *HCO* high density mixed commerical/office. Ex: small stores with office.
+* *HCO* high density mixed commercial/office. Ex: small stores with office.
 * *MR* midrise residential. Ex: apartment buildings.
-* *MC* midrise commerical. Ex: department stores, malls, strip malls.
+* *MC* midrise commercial. Ex: department stores, malls, strip malls.
 * *MO* midrise office. Ex: multi-office buildings, office parks.
-* *MCR* midrise mixed commercial/residential. Ex: residential complexes with integrated commerical.
+* *MCR* midrise mixed commercial/residential. Ex: residential complexes with integrated commercial.
 * *UR* urban core residential. Ex: residential tower.
 * *UO* urban core office. Ex: office tower.
 * *UCR* urban core commercial/residential mixed use. Ex: residential towers with ground-floor commercial.
@@ -50,4 +50,34 @@ The city is divided into districts, each of which is of a district type. Blocks 
 * *Town business district*: growing density. Valid zoning types: HR, HC, HO, HCR, HCO, MR, MC, MO, MCR
 * *Low urban*: high density and mid-height. Valid zoning types: MR, MC, MCR
 * *Urban*: high density and uncapped height. Valid zoning types: MR, MC, MCR, UR, UCR, UCO 
-* *Financial district*: high density, uncapped height, office focus. Valid zoning types: UO, UCR, UCOR
+* *Financial district*: high density, uncapped height, office focus. Valid zoning types: UO, UCO, UCOR
+
+## Road categories and zone facing
+
+Each road has a category, based on its intended use. The category of road determines what zones can take traffic off it, and its design to facilitate its use. Road categories are:
+
+1. *A* Arterial: allows rapid travel between neighborhoods
+2. *C* Collector: allows travel from arterials into the neighborhood
+3. *L* Local road: provides access to uses
+
+Where possible, collectors take traffic from arterials, and local roads take traffic from collectors. Local roads taking traffic from arterials is disfavored but not disallowed.
+
+A block is bordered by roads and natural features. A block is divided into one or more lots. Every lot in a block must face a road; blocks only permit lots to face certain road categories. The allowed adjacencies are:
+
+* *LR* L
+* *LC* L C
+* *LO* L C
+* *HR* L
+* *HC* C
+* *HO* L C
+* *HCR* L C
+* *HCO* L C
+* *MR* L
+* *MC* C A
+* *MO* C A
+* *MCR* C
+* *UR* L
+* *UO* L C
+* *UCR* L C
+* *UCO* L C
+* *UCOR* L C
