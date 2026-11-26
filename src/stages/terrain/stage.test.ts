@@ -186,7 +186,6 @@ describe('terrain v2 stage', () => {
 
   it('keeps the same structure at 30 km as at the old 2 km scale', () => {
     // The 30 km rescale grows the measurements, not the generation.
-    const fresh = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain };
     const scaled = LARGE_SCALE.terrain as Partial<Settings>;
     for (const seed of [1, 2]) {
       const small = run({}, seed, SMALL_SCALE.site), big = run(scaled, seed, 30000);
