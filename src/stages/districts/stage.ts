@@ -26,7 +26,7 @@ export const districts: Stage = {
   id: 'districts',
   title: 'Districts',
   settings: [
-    { key: 'districtSize', label: 'District size', type: 'number', min: 450, max: 6750, step: 150, default: 1800, unit: 'ha', help: 'Regions bigger than about 1.5 × this are cut into several districts' },
+    { key: 'districtSize', label: 'District size', type: 'number', min: 450, max: 6750, step: 150, default: 600, unit: 'ha', help: 'Regions bigger than about 1.5 × this are cut into several districts' },
     { key: 'settlements', label: 'Settlements', type: 'number', min: 1, max: 8, step: 1, default: 4, help: 'Centres, including the main one' },
     { key: 'growth', label: 'Growth', type: 'number', min: 0, max: 1, step: 0.05, default: 0.5, help: 'From villages to a city' },
   ],

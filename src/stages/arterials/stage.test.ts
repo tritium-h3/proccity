@@ -16,7 +16,7 @@ import { districtsIn, loopsOf, pointAt, project } from './loops.js';
 import { tightBends } from './smooth.js';
 import { slivers } from './space.js';
 import { arterials } from './stage.js';
-import { SMALL_SCALE } from '../testing.js';
+import { LARGE_SCALE, SMALL_SCALE } from '../testing.js';
 
 // Share of road length allowed inside Undeveloped land at 30 km. With gateways, a link the tree
 // needs across the wilds is a road through a whole Undeveloped district: seed 2, whose
@@ -203,10 +203,10 @@ describe('arterials stage', () => {
 
   it('handles a 30 km site at the new defaults in reasonable time', () => {
     const site = createSite(30000);
-    const ts = defaultsFor(terrain.settings) as Settings;
+    const ts = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain } as Settings;
     let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(3), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
-    tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: defaultsFor(districts.settings) as Settings, rng: createRng(22), attr: () => undefined, overridesForStage: [] }).children);
-    const out = arterials.run({ tree, leaves: leaves(tree), settings: defaultsFor(arterials.settings) as Settings, rng: createRng(44), attr: () => undefined, overridesForStage: [] });
+    tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: { ...defaultsFor(districts.settings), ...LARGE_SCALE.districts } as Settings, rng: createRng(22), attr: () => undefined, overridesForStage: [] }).children);
+    const out = arterials.run({ tree, leaves: leaves(tree), settings: { ...defaultsFor(arterials.settings), ...LARGE_SCALE.arterials } as Settings, rng: createRng(44), attr: () => undefined, overridesForStage: [] });
     const st = out.data!.get('site')!.stats!;
     expect(st.ms, JSON.stringify(st)).toBeLessThan(3000);
     for (const d of districtsOf(tree)) expect(partition(d, out.children.get(d.id) ?? []), d.id).toEqual([]);
@@ -215,10 +215,10 @@ describe('arterials stage', () => {
   it('at 30 km, bridges every river crossing and partitions the river', () => {
     for (const seed of [1, 2, 3]) {
       const site = createSite(30000);
-      const ts = defaultsFor(terrain.settings) as Settings;
+      const ts = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain } as Settings;
       let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(seed), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
-      tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: defaultsFor(districts.settings) as Settings, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children);
-      const as = defaultsFor(arterials.settings) as Settings;
+      tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: { ...defaultsFor(districts.settings), ...LARGE_SCALE.districts } as Settings, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children);
+      const as = { ...defaultsFor(arterials.settings), ...LARGE_SCALE.arterials } as Settings;
       const out = arterials.run({ tree, leaves: leaves(tree), settings: as, rng: createRng(seed * 13 + 5), attr: () => undefined, overridesForStage: [] });
       const river = tree.children.find(c => c.kind === 'river')!;
       const kids = out.children.get(river.id) ?? [];
@@ -238,10 +238,10 @@ describe('arterials stage', () => {
     const cities = new Map<number, ReturnType<typeof city30>>();
     function city30(seed: number) {
       const site = createSite(30000);
-      const ts = defaultsFor(terrain.settings) as Settings;
+      const ts = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain } as Settings;
       let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(seed), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
-      tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: defaultsFor(districts.settings) as Settings, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children);
-      const settings = defaultsFor(arterials.settings) as Settings;
+      tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: { ...defaultsFor(districts.settings), ...LARGE_SCALE.districts } as Settings, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children);
+      const settings = { ...defaultsFor(arterials.settings), ...LARGE_SCALE.arterials } as Settings;
       const out = arterials.run({ tree, leaves: leaves(tree), settings, rng: createRng(seed * 13 + 5), attr: () => undefined, overridesForStage: [] });
       return { tree, out, roads: out.data!.get('site')!.roads!, settings };
     }
@@ -417,7 +417,7 @@ describe('arterials stage', () => {
         // point in a pond; the gateway by the site edge), and a border road was skipped as covered
         // when the neighbour's stopped 300 m short of the gateway.
         // Seed 6 had a road swinging round in a C to come into its gateway square.
-        ...[1, 2, 3, 4, 5, 6].map(seed => ({ name: `seed ${seed}`, seed, settings: {} as Record<string, Settings>, terrainOffset: 0 })),
+        ...[1, 2, 3, 4, 5, 6].map(seed => ({ name: `seed ${seed}`, seed, settings: { terrain: LARGE_SCALE.terrain, districts: LARGE_SCALE.districts, arterials: LARGE_SCALE.arterials } as Record<string, Settings>, terrainOffset: 0 })),
       ];
       for (const c of cities) {
         const base = createCityDoc({ name: c.name, seed: c.seed, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...c.settings[st.id] } })) });
@@ -508,10 +508,10 @@ describe('arterials stage', () => {
 
   it('adds loops with Redundancy (at 30 km: at 2 km, gateways on 250 m districts are too crowded for loops)', () => {
     const site = createSite(30000);
-    const ts = defaultsFor(terrain.settings) as Settings;
+    const ts = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain } as Settings;
     let tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(1), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
-    tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: defaultsFor(districts.settings) as Settings, rng: createRng(8), attr: () => undefined, overridesForStage: [] }).children);
-    const loops = (redundancy: number) => arterials.run({ tree, leaves: leaves(tree), settings: { ...defaultsFor(arterials.settings), redundancy } as Settings, rng: createRng(18), attr: () => undefined, overridesForStage: [] }).data!.get('site')!.stats!.loops;
+    tree = attachChildren(tree, districts.run({ tree, leaves: leaves(tree), settings: { ...defaultsFor(districts.settings), ...LARGE_SCALE.districts } as Settings, rng: createRng(8), attr: () => undefined, overridesForStage: [] }).children);
+    const loops = (redundancy: number) => arterials.run({ tree, leaves: leaves(tree), settings: { ...defaultsFor(arterials.settings), ...LARGE_SCALE.arterials, redundancy } as Settings, rng: createRng(18), attr: () => undefined, overridesForStage: [] }).data!.get('site')!.stats!.loops;
     expect(loops(1)).toBeGreaterThan(loops(0));
   }, 120_000);
 
@@ -535,7 +535,7 @@ describe('arterials stage', () => {
 
   it('makes nothing without districts', () => {
     const site = createSite(2000);
-    const out = arterials.run({ tree: site, leaves: leaves(site), settings: defaultsFor(arterials.settings) as Settings, rng: createRng(1), attr: () => undefined, overridesForStage: [] });
+    const out = arterials.run({ tree: site, leaves: leaves(site), settings: { ...defaultsFor(arterials.settings), ...LARGE_SCALE.arterials } as Settings, rng: createRng(1), attr: () => undefined, overridesForStage: [] });
     expect([...out.children.values()].flat()).toEqual([]);
   });
 });

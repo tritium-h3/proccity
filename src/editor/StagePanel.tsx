@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { STAGES } from '../stages/index.js';
+import { DEFAULT_SITE_SIZE } from '../doc/create.js';
 import type { CityEditor } from './useCityEditor.js';
 import { SettingField } from './SettingField.js';
 import styles from './editor.module.css';
@@ -21,7 +22,7 @@ export function StagePanel({ editor }: { editor: CityEditor }) {
       {currentStage === -1 && (
         <div className={styles.stageBody}>
           <SettingField
-            field={{ key: 'size', label: 'Site size', type: 'number', min: 5000, max: 60000, step: 1000, default: 30000, unit: 'm' }}
+            field={{ key: 'size', label: 'Site size', type: 'number', min: 5000, max: 60000, step: 1000, default: DEFAULT_SITE_SIZE, unit: 'm' }}
             value={doc.site.size}
             onChange={(v, k) => actions.setSite({ size: v as number }, k)}
           />

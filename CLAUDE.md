@@ -15,8 +15,15 @@ v1's height-grid design is superseded), and **districts**
 (`docs/superpowers/specs/2026-11-23-arterials-design.md`). Each real stage is designed with the
 owner one at a time.
 
-**Scale (2026-11-24, `docs/superpowers/specs/2026-11-24-city-scale-design.md`):** sites are
-**30 km** by default (the slider runs 5–60 km). Layout sizes grew ×15 from the original 2 km
+**Defaults (2026-11-25, the owner's numbers):** sites are **10 km** (the slider runs 5–60 km),
+with regions of 2,500 ha, flats 3 cells deep, 200 ha ponds, 600 ha districts and gateways
+1,500 m apart (the spacing was measured: 2,000 m crowded gateways on 600 ha districts). Cells stay
+1.8 km, so hills are rare at 10 km (about 30 cells); 1.2 km cells bring them back at twice the
+slivers. A 10 km city generates in under a second. Tests of the 30 km scale pin its old defaults
+(`LARGE_SCALE`, `stages/testing.ts`).
+
+**Scale (2026-11-24, `docs/superpowers/specs/2026-11-24-city-scale-design.md`):** sites were
+**30 km** by default until 2026-11-25. Layout sizes grew ×15 from the original 2 km
 (1.8 km terrain cells, ~4,500 ha regions, ~1,800 ha districts, 900 ha ponds), and the
 structure stayed the same: about the same numbers of cells, regions, districts and
 triangles. Relief is 600 m, rivers 150 m wide, roads 25 m wide, and arterials about 2 km

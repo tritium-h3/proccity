@@ -1,6 +1,6 @@
 import { FORMAT, SITE_ID, type CityDoc, type RegionNode, type Settings } from './types.js';
 
-export const DEFAULT_SITE_SIZE = 30000;
+export const DEFAULT_SITE_SIZE = 10000;
 
 /** The root region: a square open slab centred on the origin. */
 export function createSite(size: number): RegionNode {

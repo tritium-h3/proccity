@@ -11,7 +11,7 @@ import { tableViolations } from './fill.js';
 import { buildGraph, isWide, type DistrictInfo } from './graph.js';
 import { allowedOn, budgets, type DistrictType, type TerrainKind } from './rules.js';
 import { districts } from './stage.js';
-import { SMALL_SCALE } from '../testing.js';
+import { LARGE_SCALE, SMALL_SCALE } from '../testing.js';
 import { union } from '../../grammar/clipper.js';
 
 const LAND = new Set(['flat', 'slope', 'hills']);
@@ -151,9 +151,9 @@ describe('districts stage', () => {
   it('keeps the same structure at 30 km', () => {
     for (const seed of [1, 2]) {
       const site = createSite(30000);
-      const ts = defaultsFor(terrain.settings) as Settings;
+      const ts = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain } as Settings;
       const tree = attachChildren(site, terrain.run({ tree: site, leaves: leaves(site), settings: ts, rng: createRng(seed), attr: (n, k) => resolveAttr(ancestry(site, n.id), k, ts), overridesForStage: [] }).children);
-      const ds = defaultsFor(districts.settings) as Settings;
+      const ds = { ...defaultsFor(districts.settings), ...LARGE_SCALE.districts } as Settings;
       const all = [...districts.run({ tree, leaves: leaves(tree), settings: ds, rng: createRng(seed * 7 + 1), attr: () => undefined, overridesForStage: [] }).children.values()].flat();
       const small = run({}, seed).all;
       expect(Math.abs(all.length - small.length), `seed ${seed}: ${all.length} vs ${small.length}`).toBeLessThanOrEqual(0.25 * small.length);

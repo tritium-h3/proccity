@@ -74,7 +74,7 @@ export const arterials: Stage = {
   id: 'arterials',
   title: 'Arterials',
   settings: [
-    { key: 'spacing', label: 'Gateway spacing', type: 'number', min: 500, max: 5000, step: 100, default: 2000, unit: 'm', help: 'The closest two gateways (where arterials cross a district border) may be' },
+    { key: 'spacing', label: 'Gateway spacing', type: 'number', min: 500, max: 5000, step: 100, default: 1500, unit: 'm', help: 'The closest two gateways (where arterials cross a district border) may be' },
     { key: 'redundancy', label: 'Redundancy', type: 'number', min: 0, max: 1, step: 0.05, default: 0.3, help: 'Share of the remaining district links added as loops' },
     { key: 'borderRoads', label: 'Border roads', type: 'number', min: 0, max: 1, step: 0.05, default: 0.3, help: 'Share of neighbouring gateways joined along the district border rather than across it' },
     { key: 'exits', label: 'Exits', type: 'number', min: 1, max: 8, step: 1, default: 3, help: 'Arterials leading off the site' },

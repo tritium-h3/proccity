@@ -12,7 +12,7 @@ import { defaultsFor, resolveAttr } from '../settings.js';
 import { riverSurfaceAt } from './elevation.js';
 import { interiorPoint } from './cells.js';
 import { terrain } from './stage.js';
-import { SMALL_SCALE } from '../testing.js';
+import { LARGE_SCALE, SMALL_SCALE } from '../testing.js';
 
 function run(over: Partial<Settings> = {}, seed = 1, size = 2000, overrides: Override[] = []) {
   const site = createSite(size);
@@ -186,8 +186,8 @@ describe('terrain v2 stage', () => {
 
   it('keeps the same structure at 30 km as at the old 2 km scale', () => {
     // The 30 km rescale grows the measurements, not the generation.
-    const fresh = defaultsFor(terrain.settings);
-    const scaled = Object.fromEntries(Object.keys(SMALL_SCALE.terrain).map(k => [k, fresh[k]])) as Partial<Settings>;
+    const fresh = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain };
+    const scaled = LARGE_SCALE.terrain as Partial<Settings>;
     for (const seed of [1, 2]) {
       const small = run({}, seed, SMALL_SCALE.site), big = run(scaled, seed, 30000);
       const kinds = (r: typeof small) => { const m: Record<string, number> = {}; for (const c of r.children) m[c.kind] = (m[c.kind] ?? 0) + 1; return m; };
@@ -208,8 +208,8 @@ describe('terrain v2 stage', () => {
   it('keeps the riverbed under the water at 30 km', () => {
     // Bed points once scaled with the cell size (360 m apart on a 150 m river): triangles then
     // joined bank to bank across the river at bank height, showing as strips over the water.
-    const fresh = defaultsFor(terrain.settings);
-    const scaled = Object.fromEntries(Object.keys(SMALL_SCALE.terrain).map(k => [k, fresh[k]])) as Partial<Settings>;
+    const fresh = { ...defaultsFor(terrain.settings), ...LARGE_SCALE.terrain };
+    const scaled = LARGE_SCALE.terrain as Partial<Settings>;
     for (const seed of [1, 2, 3]) {
       const r = run(scaled, seed, 30000);
       const river = r.children.find(c => c.kind === 'river')!;

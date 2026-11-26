@@ -82,7 +82,15 @@ export const FAKE_STAGES: Stage[] = [fakeGrid, fakeSplit];
  *  2 km scale: with these, a 2 km site generates as it always did. */
 export const SMALL_SCALE = {
   site: 2000,
-  terrain: { cellSize: 120, regionSize: 20, pondSize: 4, relief: 150, riverWidth: 40 },
+  terrain: { cellSize: 120, regionSize: 20, pondSize: 4, relief: 150, riverWidth: 40, flatWidth: 2 },
   districts: { districtSize: 8 },
   arterials: { spacing: 700, usableWidth: 60, curveRadius: 60 },
+};
+
+/** The 30 km defaults before the 10 km defaults (2026-11-25), for tests of the 30 km scale. */
+export const LARGE_SCALE = {
+  site: 30000,
+  terrain: { cellSize: 1800, regionSize: 4500, pondSize: 900, relief: 600, riverWidth: 150, flatWidth: 2 },
+  districts: { districtSize: 1800 },
+  arterials: { spacing: 2000, usableWidth: 300, curveRadius: 150 },
 };
