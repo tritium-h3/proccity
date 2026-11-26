@@ -35,7 +35,7 @@ const LOOP_DISTRICTS = 3;
 // to arrive square; a route arriving at an angle is tried instead.
 const DETOUR = 2;
 
-interface Road { id: string; points: Point2[]; exit: boolean; required: boolean; how: 'through' | 'border' | 'direct' | 'tee' | 'join' | 'star' | 'bridge' | 'connector' }
+interface Road { id: string; points: Point2[]; exit: boolean; required: boolean; how: 'through' | 'border' | 'direct' | 'tee' | 'join' | 'star' | 'bridge' | 'connector' | 'extension' }
 
 /** Metres along a polyline to its point nearest p. */
 function perimOn(line: Point2[], p: Point2): number {
@@ -983,9 +983,15 @@ export const arterials: Stage = {
     // at a gateway whose neighbour's road was skipped as already covered, an impossible square
     // approach. Never a bridge, never a cut that leaves a district with no road or splits the
     // network. Extending a dead end instead adds road, and could bring back hairpins.
+    // A road serves a district it runs along, not only one it runs through: a Town core's tee ran
+    // just outside its border, so trimming the spoke's stub past the tee looked like leaving the
+    // district with no road.
+    const touchOf = new Map<number, Set<number>>();
+    masks.forEach((m, k) => { for (const c of m.own) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { const i = (c % g.w) + di, j = Math.floor(c / g.w) + dj; if (i >= 0 && j >= 0 && i < g.w && j < g.h) { const at = j * g.w + i; let ks = touchOf.get(at); if (!ks) touchOf.set(at, (ks = new Set())); ks.add(k); } } });
+    const servedBy = (rs: Road[]) => { const out = new Set<number>(); for (const r of rs) for (const c of cellsOf(r)) { const k = districtOfCell.get(c); if (k !== undefined) out.add(k); for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { for (const kk of touchOf.get(c + dj * g.w + di) ?? []) out.add(kk); } } return out; };
     let trimmed = 0;
     for (let guard = 0; guard < 40; guard++) {
-      const before = pieces(roads), servedBefore = served(roads);
+      const before = pieces(roads), servedBefore = servedBy(roads);
       let done = false;
       for (const r of roads) {
         if (r.how === 'bridge') continue;
@@ -999,7 +1005,7 @@ export const arterials: Stage = {
           const kept = !js.length ? [] : [atStart ? slice(r.points, js[0], L) : slice(r.points, 0, js[js.length - 1])];
           const trial = [...roads.filter(o => o !== r), ...kept.map(points => ({ ...r, points }))];
           if (pieces(trial) > before) continue;
-          const servedAfter = served(trial);
+          const servedAfter = servedBy(trial);
           if ([...servedBefore].some(k => !servedAfter.has(k))) continue;
           roads.splice(roads.indexOf(r), 1, ...kept.map(points => ({ ...r, points })));
           trimmed++;
@@ -1010,7 +1016,40 @@ export const arterials: Stage = {
       }
       if (!done) break;
     }
-    if (trimmed) remarkRoads(g, roads.map(r => r.points));
+    // Opening loops and trimming removed road the grid still marks: a dead end once carried on
+    // to one of those and ended in open land.
+    remarkRoads(g, roads.map(r => r.points));
+    // A dead end the trim had to leave (it was its district's only road: a Town core's lone
+    // spoke, a border road stopping partway) carries on to the nearest other road instead,
+    // leaving the way it was heading, so it doesn't double back.
+    let extended = 0;
+    for (const r of [...roads]) {
+      if (r.how === 'bridge') continue;
+      for (const atStart of [true, false]) {
+        const P = atStart ? [...r.points].reverse() : r.points;
+        const p = P[P.length - 1], q = P[P.length - 2];
+        if (!q || !deadAt(p, r, roads)) continue;
+        const away = (c: number) => project(r.points, centreOf(g, c)).d > 2 * g.cell;
+        const tail = slice(P, Math.max(0, lineLength(P) - 2 * g.cell), lineLength(P));
+        // Carrying straight on first; then free to turn (a Town core's lone spoke points at its
+        // centre, every other road behind it: kept heading, the route circled right round). The
+        // checks below still stop it doubling back along itself.
+        let joined: Point2[] | null = null;
+        for (const startHeading of [Math.atan2(p[1] - q[1], p[0] - q[0]), undefined]) {
+          const path = route(g, p, { params, maxTurn, startHeading, goal: { touches: c => onRoad(c) && away(c) } });
+          if (!path || path.length < 2) continue;
+          const j = joinTo(path, roads.filter(o => o !== r));
+          if (!roads.some(o => o !== r && meets(j[j.length - 1], o))) continue;
+          const whole = [...tail, ...j.slice(1)];
+          if (loops(whole) || selfCrossing(whole) || sharp(whole) || sharp(simplifyLine(whole, 0.6 * cellM))) continue;
+          joined = j;
+          break;
+        }
+        if (!joined) continue;
+        lay(joined, false, true, 'extension', true, 'start');
+        extended++;
+      }
+    }
     // Dead ends: road ends that meet no other road and aren't on the site edge. Expected 0.
     let deadEnds = 0;
     for (const r of roads) for (const p of [r.points[0], r.points[r.points.length - 1]]) {
@@ -1086,7 +1125,7 @@ export const arterials: Stage = {
           loops: links.chosen.filter(i => !links.tree.has(i) && cands[i].kind !== 'exit').length,
           exits: links.chosen.filter(i => cands[i].kind === 'exit').length, bridges,
           gateways: new Set(gates.flat().map(x => `${x.at[0]},${x.at[1]}`)).size,
-          throughRoads: through, askew, merged, forks, localLoops, loopsOpened: opened, trimmed, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
+          throughRoads: through, askew, merged, forks, localLoops, loopsOpened: opened, trimmed, extended, borderRoads, directs, tees, stars, joins, leaves: links.leaves.length, crowded, deadEnds,
           connectors, unreachable,
           tightCurves: roads.reduce((m, r) => m + tightBends(r.points, s.curveRadius), 0),
           slivers: sliverCount, overGrade: Math.round(overGrade), ms: Math.round(performance.now() - t0),
