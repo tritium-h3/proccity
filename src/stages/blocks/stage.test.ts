@@ -84,3 +84,14 @@ describe('zone pins', () => {
     expect(zoned / all).toBeGreaterThan(0.8);
   }, 120_000);
 });
+
+describe('blocks at 30 km', () => {
+  it('still divides the developed land', async () => {
+    const { LARGE_SCALE } = await import('../testing.js');
+    const L = LARGE_SCALE as unknown as Record<string, Record<string, number>> & { site: number };
+    const base = createCityDoc({ name: '30', seed: 1, now: 'n', id: 'o', stages: STAGES.map(st => ({ id: st.id, defaults: defaultsFor(st.settings) })) });
+    const doc = { ...base, site: { size: L.site }, stages: base.stages.map(s => ({ ...s, settings: { ...s.settings, ...(L[s.id] ?? {}) } })), generatedThrough: STAGES.length - 1 };
+    const stats = generate({ doc, fromStage: 0, stages: STAGES }).tree.data!.blockStats!;
+    expect(stats.blocks).toBeGreaterThan(5000);
+  }, 300_000);
+});

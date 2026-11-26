@@ -11,7 +11,7 @@ import { bounds, containsPoint } from '../../grammar/polygon.js';
 import type { DistrictType } from '../../stages/districts/rules.js';
 import { flatSurface } from '../../stages/terrain/ground.js';
 import { heightSampler } from '../heightSampler.js';
-import type { StageRenderer } from './index.js';
+import type { RenderContext, Rendered, StageRenderer } from './index.js';
 import { DISTRICT_COLOUR, rgbaOf, tintedTerrain } from './tint.js';
 
 const ASPHALT = 0x3a3a3e;
@@ -43,12 +43,24 @@ export const renderArterials: StageRenderer = (nodes, ctx) => {
   });
   const bridges = nodes.filter(n => n.kind === 'bridge');
   const out = tintedTerrain(ctx, blocks, [...bridges, ...nodes.filter(n => n.kind !== 'bridge')]);
+  return addArterials(out, ctx);
+};
+
+/** The arterials as ribbons and bridge decks on top of a drawn terrain (shared with later stages,
+ *  whose own regions are only tinted into the ground). */
+export function addArterials(out: Rendered, ctx: RenderContext): Rendered {
   const pick = out.pickables[0]?.nodeIdAt;
+  const bridges: RegionNode[] = [];
+  let arterialWidth = 25;
+  walk(ctx.tree, n => {
+    if (n.kind === 'bridge') bridges.push(n);
+    if (n.kind === 'arterial' && typeof n.attrs.width === 'number') arterialWidth = n.attrs.width;
+  });
 
   // Road ribbons, draped on the drawn ground.
   const sb = bounds(ctx.tree.geometry.footprint);
   const size = Math.max(sb.maxX - sb.minX, sb.maxZ - sb.minZ);
-  const width = Number(nodes.find(n => n.kind === 'arterial')?.attrs.width ?? 25);
+  const width = arterialWidth;
   const heightAt = out.ground ? heightSampler(out.ground.pos, out.ground.tris, { minX: sb.minX, minZ: sb.minZ, size }, size / 1500) : (x: number, z: number) => groundHeightAt(ctx.tree, x, z) * ctx.exaggeration;
   // Over a bridge a ribbon runs at the deck: draped on the drawn ground it dived to the riverbed
   // and showed through the water as a dark strip beside every deck.
@@ -112,4 +124,4 @@ export const renderArterials: StageRenderer = (nodes, ctx) => {
     if (pick) out.pickables.unshift({ mesh, nodeIdAt: pick });
   }
   return out;
-};
+}

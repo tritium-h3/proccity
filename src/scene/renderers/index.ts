@@ -4,6 +4,7 @@
 import type * as THREE from 'three/webgpu';
 import type { Point2, RegionNode } from '../../doc/types.js';
 import { renderArterials } from './arterials.js';
+import { renderBlocks } from './blocks.js';
 import { renderDistricts } from './districts.js';
 import { renderSite } from './site.js';
 import { renderTerrain } from './terrain.js';
@@ -32,6 +33,5 @@ export const RENDERERS: Record<string, StageRenderer> = {
   terrain: renderTerrain,
   districts: renderDistricts,
   arterials: renderArterials,
-  // Placeholder until the blocks renderer: the terrain and the arterial ribbons.
-  blocks: renderArterials,
+  blocks: renderBlocks,
 };
