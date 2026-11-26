@@ -32,4 +32,6 @@ export const RENDERERS: Record<string, StageRenderer> = {
   terrain: renderTerrain,
   districts: renderDistricts,
   arterials: renderArterials,
+  // Placeholder until the blocks renderer: the terrain and the arterial ribbons.
+  blocks: renderArterials,
 };
