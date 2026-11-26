@@ -1,11 +1,11 @@
 // A superblock's outline, sorted by what lies beyond it: an arterial, another developed district
-// (where a shared border street goes), or nothing a road may end on (water, the site edge,
-// Undeveloped land). Arterials leave about half of a superblock's outline on district borders, so
-// without border streets most cuts would end in open land.
+// (where a shared border street goes: every block must face a road, so a district border can't be
+// left bare), open land (water, Undeveloped land, the site edge: blocks meet it with a rough edge
+// and roads may end on it), or none of these.
 
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
 
-export type EdgeKind = 'A' | 'border' | 'none';
+export type EdgeKind = 'A' | 'border' | 'open' | 'none';
 export interface Run { points: Point2[]; kind: EdgeKind }
 
 /** Each ring of the footprint as runs of like edges, classified at each edge's midpoint. */
@@ -35,14 +35,5 @@ export function classifyBoundary(sb: MultiPolygon, kindAt: (mid: Point2, outward
   return out;
 }
 
-/** The border runs a street may follow: those with an arterial at both ends, so the street never
- *  runs out into land with no road. */
-export function borderStreets(rings: Run[][]): Point2[][] {
-  const out: Point2[][] = [];
-  for (const runs of rings) runs.forEach((r, i) => {
-    if (r.kind !== 'border' || runs.length < 2) return;
-    const prev = runs[(i + runs.length - 1) % runs.length], next = runs[(i + 1) % runs.length];
-    if (prev.kind === 'A' && next.kind === 'A') out.push(r.points);
-  });
-  return out;
-}
+/** The runs of one kind, as polylines. */
+export const runsOf = (rings: Run[][], kind: EdgeKind): Point2[][] => rings.flat().filter(r => r.kind === kind).map(r => r.points);

@@ -69,6 +69,45 @@ export function chordThrough(mp: MultiPolygon, origin: Point2, dir: Point2): [Po
   return [[ox + dx * ts[k - 1], oz + dz * ts[k - 1]], [ox + dx * ts[k], oz + dz * ts[k]]];
 }
 
+/** Every chord of the piece along the infinite line through `origin` along `dir`, as segments. */
+export function chordsAlong(mp: MultiPolygon, origin: Point2, dir: Point2): [Point2, Point2][] {
+  const [ox, oz] = origin, [dx, dz] = dir;
+  const ts: number[] = [];
+  for (const poly of mp) for (const ring of poly) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[j], b = ring[i];
+    const va = -(a[0] - ox) * dz + (a[1] - oz) * dx, vb = -(b[0] - ox) * dz + (b[1] - oz) * dx;
+    if ((va > 0) === (vb > 0)) continue;
+    const t = va / (va - vb);
+    const ua = (a[0] - ox) * dx + (a[1] - oz) * dz, ub = (b[0] - ox) * dx + (b[1] - oz) * dz;
+    ts.push(ua + (ub - ua) * t);
+  }
+  ts.sort((a, b) => a - b);
+  const out: [Point2, Point2][] = [];
+  for (let k = 0; k + 1 < ts.length; k += 2) out.push([[ox + dx * ts[k], oz + dz * ts[k]], [ox + dx * ts[k + 1], oz + dz * ts[k + 1]]]);
+  return out;
+}
+
+/** Points along the piece's outline every `step` metres where `keep` holds, with the inward
+ *  normal there (rings keep the interior on their left). */
+export function outlineSamples(mp: MultiPolygon, step: number, keep: (p: Point2) => boolean): { p: Point2; inward: Point2 }[] {
+  const out: { p: Point2; inward: Point2 }[] = [];
+  for (const poly of mp) for (const ring of poly) {
+    let carry = step / 2;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L === 0) continue;
+      const inward: Point2 = [-(b[1] - a[1]) / L, (b[0] - a[0]) / L];
+      for (; carry < L; carry += step) {
+        const p: Point2 = [a[0] + ((b[0] - a[0]) * carry) / L, a[1] + ((b[1] - a[1]) * carry) / L];
+        if (keep(p)) out.push({ p, inward });
+      }
+      carry -= L;
+    }
+  }
+  return out;
+}
+
 /** Distance from p to the polyline and the side it's on (+1 left of the direction of travel). */
 export function sideOf(line: Point2[], p: Point2): { d: number; side: number } {
   let best = { d: Infinity, side: 0 };

@@ -5,7 +5,7 @@
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
 import { area } from '../../grammar/polygon.js';
 import { offsetPolyline, union } from '../../grammar/clipper.js';
-import { chordThrough, extend, obb, offsetPath, splitBand, walkToRoad, type Box } from './geometry.js';
+import { chordsAlong, chordThrough, extend, outlineSamples, obb, offsetPath, splitBand, walkToRoad, type Box } from './geometry.js';
 import type { RoadIndex } from './roads.js';
 import type { Category, Family } from './rules.js';
 
@@ -29,6 +29,8 @@ export interface DivideCtx {
   minDepth: number;
   rng: () => number;
   roads: RoadIndex;
+  /** is p on the superblock's outline against open land (water, Undeveloped land, the site edge)? */
+  openAt: (p: Point2) => boolean;
   /** candidate cuts across the piece, best first; `across` is the direction the cut should run */
   cutter: (piece: MultiPolygon, origin: Point2, across: number, ctx: DivideCtx) => Cut | null;
   /** extra acceptance test for a cut's line (grade, kinks); null = fine */
@@ -50,6 +52,8 @@ const SLACK = 1.4;
 const OFFSETS = [0, 0.1, -0.1, 0.2, -0.2];
 // The longest run along a roadless edge, in block lengths.
 const EDGE_RUN = 2;
+// An end on open land, in metres of edge run: a road-to-road cut nearby is preferred.
+const OPEN_COST = 100;
 
 interface Plan { origin: Point2; across: number }
 
@@ -76,7 +80,7 @@ export function plans(box: Box, t: { depth: number; length: number }): Plan[] {
 /** Divide the pieces of one superblock (what's left after its border streets). */
 export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { streets: Street[]; strips: MultiPolygon[]; blocks: MultiPolygon[]; stats: Record<string, number> } {
   const streets: Street[] = [], strips: MultiPolygon[] = [], blocks: MultiPolygon[] = [];
-  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, rejectedCheck: 0, edgeRuns: 0, edgeRunM: 0 };
+  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, rejectedCheck: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0 };
   const queue = pieces.map(piece => ({ piece, a: area(piece) }));
   const t = targets(ctx);
   while (queue.length) {
@@ -87,22 +91,21 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
   }
   return { streets, strips, blocks, stats };
 
-  /** Try the plans' cuts. A cut ending on a roadless edge (water, Undeveloped land, the site edge)
-   *  turns and follows it inside the piece to the nearest road, so it never ends in open land; the
-   *  owner prefers that to roads round every shore. A cut from road to road wins outright, else
-   *  the one with the shortest run along an edge. */
+  /** Try the plans' cuts. A road may end on open land (water, Undeveloped land, the site edge), so
+   *  the city's outskirts stay rough, but at least one end must meet a road. An end on any other
+   *  roadless edge turns and follows it inside the piece to the nearest road. A cut from road to
+   *  road wins outright; otherwise the cheapest, an open end counting as `OPEN_COST` metres of
+   *  edge run. */
   function tryCut(piece: MultiPolygon): boolean {
     const box = obb(piece);
     const w = ctx.s.localWidth, maxRun = EDGE_RUN * t.length;
     let best: { run: number; line: Point2[]; walks: (ReturnType<typeof walkToRoad>)[]; split: [MultiPolygon, MultiPolygon, MultiPolygon] } | null = null;
-    for (const p of plans(box, t)) {
-      const cut = ctx.cutter(piece, p.origin, p.across, ctx);
-      if (!cut) continue;
-      const line = cut.line;
+    for (const line of candidates(piece, box, ctx, t)) {
       const ends = [line[0], line[line.length - 1]];
-      const walks = ends.map(e => (ctx.roads.at(e) ? null : walkToRoad(piece, e, q => !!ctx.roads.at(q), maxRun)));
-      if (walks.some((wk, i) => !wk && !ctx.roads.at(ends[i]))) { stats.rejectedEnds++; continue; }
-      const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0);
+      const onRoad = ends.map(e => !!ctx.roads.at(e)), open = ends.map((e, i) => !onRoad[i] && ctx.openAt(e));
+      const walks = ends.map((e, i) => (onRoad[i] || open[i] ? null : walkToRoad(piece, e, q => !!ctx.roads.at(q), maxRun)));
+      if (walks.some((wk, i) => !wk && !onRoad[i] && !open[i]) || open.every(o => o)) { stats.rejectedEnds++; continue; }
+      const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0) + open.filter(o => o).length * OPEN_COST;
       if (best && run >= best.run) continue;
       if (ctx.check?.(line, ctx)) { stats.rejectedCheck++; continue; }
       // Along an edge the road lies wholly inside: a band of twice its width centred on the
@@ -118,6 +121,7 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
     }
     if (!best) return false;
     const { line, walks, split } = best;
+    stats.openEnds += [line[0], line[line.length - 1]].filter(e => !ctx.roads.at(e) && ctx.openAt(e)).length;
     const category: Category = 'L';
     // The centreline: the cut, then each edge run half a width inside the outline.
     const offs = walks.map(wk => (wk ? offsetPath(wk.path, (wk.side * w) / 2) : null));
@@ -130,6 +134,32 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
     return true;
   }
 }
+
+/** The cut lines to try, best first: each planned line (every stretch of it across the piece, as
+ *  an odd-shaped piece can have several), then lines square off the piece's road edges, nearest
+ *  its middle first. A piece with a road on one side only can be cut no other way. */
+function* candidates(piece: MultiPolygon, box: Box, ctx: DivideCtx, t: { depth: number; length: number }): Generator<Point2[]> {
+  const ps = plans(box, t);
+  if (!ps.length) return; // small enough: a block
+  for (const p of ps) {
+    const dir: Point2 = [Math.cos(p.across), Math.sin(p.across)];
+    const chords = chordsAlong(piece, p.origin, dir)
+      .sort((a, b) => dist2(mid(a), p.origin) - dist2(mid(b), p.origin));
+    for (const c of chords) yield c;
+  }
+  const samples = outlineSamples(piece, t.depth / 2, q => !!ctx.roads.at(q))
+    .sort((a, b) => dist2(a.p, box.centre) - dist2(b.p, box.centre))
+    .slice(0, ROAD_SQUARE);
+  for (const { p, inward } of samples) {
+    const start: Point2 = [p[0] + inward[0] * 0.01, p[1] + inward[1] * 0.01];
+    const c = chordThrough(piece, start, inward);
+    // The chord starting at this road point (the far end is where it leaves the piece).
+    if (c) yield dist2(c[0], p) < dist2(c[1], p) ? c : [c[1], c[0]];
+  }
+}
+const mid = (c: Point2[]): Point2 => [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
+const dist2 = (a: Point2, b: Point2) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+const ROAD_SQUARE = 8;
 
 /** Extend only the last end of a polyline. */
 function extendEnd(line: Point2[], by: number): Point2[] {
