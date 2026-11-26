@@ -11,8 +11,9 @@ produced, never adds. The design is `docs/superpowers/specs/2026-11-20-foundatio
 Stages so far: **terrain**, now v2 (`docs/superpowers/specs/2026-11-21-terrain-v2-design.md`;
 v1's height-grid design is superseded), and **districts**
 (`docs/superpowers/specs/2026-11-23-districts-design.md`; the owner's zoning notes are in
-`docs/notes/zoningBlocks.md`), and **arterials**
-(`docs/superpowers/specs/2026-11-23-arterials-design.md`). Each real stage is designed with the
+`docs/notes/zoningBlocks.md`), **arterials**
+(`docs/superpowers/specs/2026-11-23-arterials-design.md`) and **blocks**
+(`docs/superpowers/specs/2026-11-25-blocks-design.md`). Each real stage is designed with the
 owner one at a time.
 
 **Defaults (2026-11-25, the owner's numbers):** sites are **10 km** (the slider runs 5–60 km),
@@ -33,8 +34,7 @@ settings. Physical things don't scale: road width, max grade, vertical tolerance
 width. Tests written at 2 km pass `SMALL_SCALE` (`stages/testing.ts`), and 30 km tests check
 that the structure holds. A saved city keeps its own settings and site size.
 
-Local roads come next; whether collectors sit between arterials and local
-roads is pinned for that design.
+Lots come next.
 
 ## Architecture (`src/`)
 
@@ -108,7 +108,7 @@ roads is pinned for that design.
 
   **Polygon budget: terrain draws about 6,000 triangles (ground plus water surfaces), so later
   stages get the budget.** It's slightly over at 30 km because of the riverbed. Check new
-  terrain detail against it. Arterial ribbons add about 8,000 at 30 km.
+  terrain detail against it. Arterial ribbons add about 8,000 at 30 km. Blocks add none (tinted).
 
   **Fine detail is cosmetic, in the renderer's shader. Never add it to the geometry.**
 - **`stages/districts/`:** each terrain land region is cut into districts (hills stay whole,
@@ -227,6 +227,33 @@ roads is pinned for that design.
       ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
       + `water`). `data.roads` keeps the centrelines (with `how`, for diagnosis); the stats count compromises (`deadEnds`
       should be 0).
+- **`stages/blocks/`:** each developed superblock is divided by collectors, then local roads,
+  by recursive cuts, into blocks, and each block gets a zone. The zone tables, district zones,
+  road facing and use weights are in `rules.ts`, copied from the owner's notes
+  (`docs/notes/zoningBlocks.md` is the source of truth). Undeveloped superblocks are left alone.
+  - `edges.ts`: a superblock's outline is arterial, **border** (another developed district: every
+    border gets a shared collector, half each side, since every block must face a road) or
+    **open** (water, Undeveloped land, the site edge). Blocks meet open land with a rough edge;
+    the owner wants rough outskirts and no shore or park-edge roads.
+  - `divide.ts`: largest piece first, cut across its long side while it's long, then along it
+    while it's deep, positioned so blocks come out near the target size (two families: sparse for
+    Suburban and Rural, dense for the rest). A collector while the piece is longer than the
+    collector spacing and both halves hold two rows of blocks, else a local road. A road meets a
+    road at one end at least; the other may end on open land. Candidates: each planned line (every
+    stretch across an odd shape), traced along the field, then straight, then square off the
+    piece's road edges. Rejected: kinks over 120°, self-crossing, over the local Max grade, a side
+    under a lot (`smallestLot`), not a lot deep throughout (`solid`: erode, dilate), and, the
+    owner's ask, wedges: a final block fills 70% of its box, and a road end meets at 50°+ (a
+    slanted traced end gets a square stub instead).
+  - `field.ts` / `trace.ts`: dense cuts keep the plan's direction and turn to the contours only as
+    far as the grade needs; sparse ones follow the contours. `height.ts` rasterises the terrain's
+    triangles once (`groundHeightAt` per query was far too slow); slope **and the grade check**
+    use it smoothed over 200 m (the terrain's facets kinked every streamline).
+  - `zones.ts`: a block's faces are the road categories along its outline (`roads.ts` indexes
+    every centreline); its zone is a weighted pick among its district's zones whose lots may face
+    one of them, one draw per block from its own stream. Zone pins (`overridable.block`) hold only
+    where the generator could have chosen them.
+  - Site data: `streets` (centrelines) and `blockStats` (its own key: the arterials own `stats`).
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
   so regenerating stage k never disturbs earlier stages and undo is exact.
@@ -265,7 +292,8 @@ roads is pinned for that design.
   renderer reuses the terrain renderer (`buildTerrain` with a tint) and colours it from a
   texture baked from the district footprints (`scene/rasterise.ts`, shared via
   `renderers/tint.ts`), so **districts add no triangles**. Arterials tint superblocks and road
-  strips with their district's colour. Roads themselves are **ribbons** draped on the ground
+  strips with their district's colour. Blocks tint zones and streets into a 4096 px texture (2.4 m a pixel at 10 km) and reuse the
+  arterial ribbons (`addArterials`). Roads themselves are **ribbons** draped on the ground
   as drawn (`scene/heightSampler.ts`, from the smoothed mesh), sampled every site/300. They
   run at deck height over bridges. Bridge decks are geometry too. At 30 km a road is under 2
   pixels of any baked texture.

@@ -16,10 +16,10 @@ export interface BlockSettings {
   collectorWidth: number; localWidth: number;
   denseDepth: number; denseLength: number; sparseDepth: number; sparseLength: number;
   denseCollectors: number; sparseCollectors: number;
-  localGrade: number; culDeSacs: number;
+  localGrade: number;
 }
 
-export interface Street { points: Point2[]; category: 'C' | 'L'; width: number; culDeSac?: boolean }
+export interface Street { points: Point2[]; category: 'C' | 'L'; width: number }
 
 
 export interface DivideCtx {

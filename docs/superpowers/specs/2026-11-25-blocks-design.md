@@ -204,3 +204,18 @@ sparse blocks, compact storage, a smaller default site). The plan doesn't degrad
   owns the real ones).
 - How the renderer draws local roads and collectors within the budget.
 - Seeds: per stage as usual, so regenerating blocks never disturbs arterials.
+
+## As built (2026-11-25)
+
+- **Squareness** (the owner's ask during the build): a final block fills at least 70% of its
+  oriented box (or 90% of its parent's fill, for odd superblocks), is a lot deep throughout, and
+  road ends meet at 50° or more; a traced cut meeting its road at a slant gets a short square stub.
+- **Grade** is checked on the ground smoothed over 200 m, the same surface the field steers by.
+- **Cul-de-sacs are not built.** With roads allowed to end on open land, the piece they were for
+  (no through cut fits) hardly arises; the setting was removed rather than left doing nothing.
+- **Collectors come out in pieces**, each across the piece being cut, not as long corridors.
+  Left for the owner to judge.
+- Block sizes stay at the proposed defaults (dense 70 × 160 m, sparse 120 × 400 m): the owner
+  prefers more lots per block.
+- About 5–10% of developed land is still in blocks over 20 ha, mostly steep Town core slopes where
+  no cut keeps under the 10% local grade.

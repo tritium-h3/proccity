@@ -51,7 +51,7 @@ export interface RegionData {
   /** road centrelines a stage laid (arterials, on the site); later stages branch off them */
   roads?: { id: string; points: Point2[]; exit: boolean; /** how it was laid (through, border, tee, join, …): for diagnosis */ how?: string }[];
   /** collector and local road centrelines (blocks, on the site) */
-  streets?: { id: string; points: Point2[]; category: 'C' | 'L'; width: number; culDeSac?: boolean }[];
+  streets?: { id: string; points: Point2[]; category: 'C' | 'L'; width: number }[];
   /** the blocks stage's numbers (kept apart from `stats`, which the arterials stage owns on the site) */
   blockStats?: Record<string, number>;
 }

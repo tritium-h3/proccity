@@ -22,7 +22,7 @@ import { facesOf, pickZone, zoneFits } from './zones.js';
 const PROBE = 2; // m beyond an outline edge, to see what's on the other side
 const CRUMB = 100; // m²
 
-export interface StreetData { id: string; points: Point2[]; category: 'C' | 'L'; width: number; culDeSac?: boolean }
+export interface StreetData { id: string; points: Point2[]; category: 'C' | 'L'; width: number }
 
 export const blocks: Stage = {
   id: 'blocks',
@@ -37,7 +37,6 @@ export const blocks: Stage = {
     { key: 'denseCollectors', label: 'Dense collector spacing', type: 'number', min: 200, max: 1000, step: 25, default: 400, unit: 'm' },
     { key: 'sparseCollectors', label: 'Sparse collector spacing', type: 'number', min: 300, max: 2000, step: 50, default: 700, unit: 'm' },
     { key: 'localGrade', label: 'Max grade', type: 'number', min: 4, max: 20, step: 1, default: 10, unit: '%', help: 'For collectors and local roads' },
-    { key: 'culDeSacs', label: 'Cul-de-sacs', type: 'number', min: 0, max: 0.3, step: 0.01, default: 0.05, help: 'Share of Suburban pieces that may end in one when no road crosses them' },
   ],
 
   overridable: {
