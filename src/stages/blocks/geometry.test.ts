@@ -65,3 +65,12 @@ describe('turning along a roadless edge', () => {
     expect(splitBand(rect(0, 0, 200, 100), rect(95, 50, 105, 110))).toBeNull();
   });
 });
+
+describe('solid pieces', () => {
+  it('passes a plain block and refuses a wedge tail', async () => {
+    const { solid } = await import('./divide.js');
+    expect(solid(rect(0, 0, 160, 70), 30)).toBe(true);
+    // A block with a 300 m tail 10 m wide.
+    expect(solid([[[[0, 0], [160, 0], [160, 70], [100, 70], [100, 370], [90, 370], [90, 70], [0, 70]]]], 30)).toBe(false);
+  });
+});

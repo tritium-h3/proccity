@@ -1,12 +1,15 @@
 // The recursion: a superblock is cut, largest piece first, by roads running from road to road
 // across it, until every piece is a block. Each cut is typed when it's made (its width is cut out
-// then). Pure; the direction of each cut comes from `ctx.cutter`.
+// then). Pure; cuts are traced along `ctx.field` where there is one, straight otherwise.
 
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
-import { area } from '../../grammar/polygon.js';
-import { offsetPolyline, union } from '../../grammar/clipper.js';
-import { chordsAlong, chordThrough, extend, outlineSamples, obb, offsetPath, splitBand, walkToRoad, type Box } from './geometry.js';
+import { area, simplifyLine } from '../../grammar/polygon.js';
+import { offsetPolygons, offsetPolyline, union } from '../../grammar/clipper.js';
+import { chordsAlong, chordThrough, extend, outlineSamples, sideOf, obb, offsetPath, splitBand, walkToRoad, type Box } from './geometry.js';
+import type { Field } from './field.js';
+import type { HeightRaster } from './height.js';
 import type { RoadIndex } from './roads.js';
+import { traceCut } from './trace.js';
 import type { Category, Family } from './rules.js';
 
 export interface BlockSettings {
@@ -18,8 +21,6 @@ export interface BlockSettings {
 
 export interface Street { points: Point2[]; category: 'C' | 'L'; width: number; culDeSac?: boolean }
 
-/** A candidate cut: a line from boundary to boundary of the piece. */
-export interface Cut { line: Point2[] }
 
 export interface DivideCtx {
   family: Family;
@@ -31,16 +32,60 @@ export interface DivideCtx {
   roads: RoadIndex;
   /** is p on the superblock's outline against open land (water, Undeveloped land, the site edge)? */
   openAt: (p: Point2) => boolean;
-  /** candidate cuts across the piece, best first; `across` is the direction the cut should run */
-  cutter: (piece: MultiPolygon, origin: Point2, across: number, ctx: DivideCtx) => Cut | null;
-  /** extra acceptance test for a cut's line (grade, kinks); null = fine */
-  check?: (line: Point2[], ctx: DivideCtx) => string | null;
+  /** which way cuts should run (terrain-following); none = straight cuts */
+  field?: Field;
+  /** the ground, for the grade check; none = flat */
+  height?: HeightRaster;
 }
 
-export const straightCutter: DivideCtx['cutter'] = (piece, origin, across) => {
-  const c = chordThrough(piece, origin, [Math.cos(across), Math.sin(across)]);
-  return c ? { line: c } : null;
-};
+/** Why a cut's line won't do as a road, or null: a turn over 120° (also on the line simplified as
+ *  laid, since a curl over a few steps reads as one hairpin), crossing itself, or a stretch steeper
+ *  than the Max grade, on the smoothed ground the field steers by (the raw terrain is big flat
+ *  facets with creases that no road could follow smoothly). */
+export function badLine(line: Point2[], ctx: DivideCtx): string | null {
+  for (const l of [line, simplifyLine(line, KINK_TOL)]) if (sharpTurn(l)) return 'kink';
+  if (crosses(simplifyLine(line, 0.5))) return 'crossing';
+  if (ctx.height) {
+    const g = ctx.s.localGrade / 100;
+    let prev = line[0], prevH = ctx.height.smoothAt(...prev), run = 0;
+    for (let i = 1; i < line.length; i++) {
+      const [a, b] = [line[i - 1], line[i]];
+      const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / GRADE_STEP));
+      for (let k = 1; k <= n; k++) {
+        const q: Point2 = [a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n];
+        run += Math.hypot(q[0] - prev[0], q[1] - prev[1]);
+        prev = q;
+        if (run < GRADE_STEP) continue;
+        const h = ctx.height.smoothAt(...q);
+        if (Math.abs(h - prevH) / run > g * GRADE_SLACK) return 'grade';
+        prevH = h; run = 0;
+      }
+    }
+  }
+  return null;
+}
+const KINK_TOL = 6;
+const GRADE_STEP = 20;
+// The raster interpolates a coarse surface: a little over the limit on one 20 m stretch is noise.
+const GRADE_SLACK = 1.15;
+
+function sharpTurn(l: Point2[]): boolean {
+  for (let i = 1; i + 1 < l.length; i++) {
+    const ax = l[i][0] - l[i - 1][0], az = l[i][1] - l[i - 1][1], bx = l[i + 1][0] - l[i][0], bz = l[i + 1][1] - l[i][1];
+    const la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+    if (la > 1e-9 && lb > 1e-9 && (ax * bx + az * bz) / (la * lb) < -0.5) return true;
+  }
+  return false;
+}
+
+function crosses(l: Point2[]): boolean {
+  const cross = (o: Point2, a: Point2, b: Point2) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  for (let i = 0; i + 1 < l.length; i++) for (let j = i + 2; j + 1 < l.length; j++) {
+    const [p, q, r, s] = [l[i], l[i + 1], l[j], l[j + 1]];
+    if (cross(p, q, r) * cross(p, q, s) < 0 && cross(r, s, p) * cross(r, s, q) < 0) return true;
+  }
+  return false;
+}
 
 /** The family's block size: depth (short side) and length (long side). */
 export const targets = (ctx: DivideCtx) => (ctx.family === 'sparse'
@@ -80,7 +125,7 @@ export function plans(box: Box, t: { depth: number; length: number }): Plan[] {
 /** Divide the pieces of one superblock (what's left after its border streets). */
 export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { streets: Street[]; strips: MultiPolygon[]; blocks: MultiPolygon[]; stats: Record<string, number> } {
   const streets: Street[] = [], strips: MultiPolygon[] = [], blocks: MultiPolygon[] = [];
-  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, rejectedCheck: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0 };
+  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, rejectedCheck: 0, rejectedThin: 0, rejectedSquare: 0, rejectedAngle: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0 };
   const queue = pieces.map(piece => ({ piece, a: area(piece) }));
   const t = targets(ctx);
   while (queue.length) {
@@ -100,14 +145,20 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
     const box = obb(piece);
     const w = ctx.s.localWidth, maxRun = EDGE_RUN * t.length;
     let best: { run: number; line: Point2[]; walks: (ReturnType<typeof walkToRoad>)[]; split: [MultiPolygon, MultiPolygon, MultiPolygon] } | null = null;
-    for (const line of candidates(piece, box, ctx, t)) {
+    for (let line of candidates(piece, box, ctx, t)) {
       const ends = [line[0], line[line.length - 1]];
       const onRoad = ends.map(e => !!ctx.roads.at(e)), open = ends.map((e, i) => !onRoad[i] && ctx.openAt(e));
       const walks = ends.map((e, i) => (onRoad[i] || open[i] ? null : walkToRoad(piece, e, q => !!ctx.roads.at(q), maxRun)));
       if (walks.some((wk, i) => !wk && !onRoad[i] && !open[i]) || open.every(o => o)) { stats.rejectedEnds++; continue; }
       const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0) + open.filter(o => o).length * OPEN_COST;
       if (best && run >= best.run) continue;
-      if (ctx.check?.(line, ctx)) { stats.rejectedCheck++; continue; }
+      // A traced cut meeting its road at a slant gets a short square stub there instead.
+      for (const i of [0, 1]) if (onRoad[i] && !squareEnds(piece, line, i === 0 ? [true, false] : [false, true])) {
+        const fixed = squareStub(piece, i === 0 ? line : [...line].reverse(), STUB);
+        if (fixed) line = i === 0 ? fixed : fixed.reverse();
+      }
+      { const why = badLine(line, ctx); if (why) { stats.rejectedCheck++; stats[`rejected_${why}`] = (stats[`rejected_${why}`] ?? 0) + 1; continue; } }
+      if (!squareEnds(piece, line, onRoad)) { stats.rejectedAngle++; continue; }
       // Along an edge the road lies wholly inside: a band of twice its width centred on the
       // outline, whose outer half falls outside the piece. Its far end overshoots into the road
       // it meets, so no corner is left between them.
@@ -116,6 +167,12 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): { stre
       const split = splitBand(piece, band);
       if (!split) { stats.rejectedSplit++; continue; }
       if (![split[1], split[2]].every(side => area(side) >= ctx.minBlockArea && obb(side).short >= ctx.minDepth)) { stats.rejectedSize++; continue; }
+      if (![split[1], split[2]].every(side => solid(side, ctx.minDepth))) { stats.rejectedThin++; continue; }
+      // Squareness (the owner's ask): no wedge-shaped blocks. Only sides small enough to be blocks
+      // are judged (bigger ones are cut again); each fills most of its box, or at least isn't much
+      // worse than the piece it came from (superblocks can be odd shapes to begin with).
+      const need = Math.min(SQUARE, SQUARE_KEEP * fill(piece));
+      if (![split[1], split[2]].every(side => plans(obb(side), t).length > 0 || fill(side) >= need)) { stats.rejectedSquare++; continue; }
       best = { run, line, walks, split };
       if (run === 0) break;
     }
@@ -145,7 +202,14 @@ function* candidates(piece: MultiPolygon, box: Box, ctx: DivideCtx, t: { depth: 
     const dir: Point2 = [Math.cos(p.across), Math.sin(p.across)];
     const chords = chordsAlong(piece, p.origin, dir)
       .sort((a, b) => dist2(mid(a), p.origin) - dist2(mid(b), p.origin));
-    for (const c of chords) yield c;
+    for (const c of chords) {
+      // Traced along the field from the chord's middle first; the straight chord if that fails.
+      if (ctx.field) {
+        const traced = traceCut(piece, ctx.field, mid(c), p.across, TRACE_STEP, 3 * box.long);
+        if (traced) yield simplifyLine(traced, 1);
+      }
+      yield c;
+    }
   }
   const samples = outlineSamples(piece, t.depth / 2, q => !!ctx.roads.at(q))
     .sort((a, b) => dist2(a.p, box.centre) - dist2(b.p, box.centre))
@@ -160,6 +224,63 @@ function* candidates(piece: MultiPolygon, box: Box, ctx: DivideCtx, t: { depth: 
 const mid = (c: Point2[]): Point2 => [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
 const dist2 = (a: Point2, b: Point2) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
 const ROAD_SQUARE = 8;
+const TRACE_STEP = 10;
+
+/** Is the piece a lot deep throughout? Shrunk by half a lot depth it stays one piece, and grown
+ *  back it keeps most of its area. Converging streamlines cut wedges and long thin tails that a
+ *  box or area test passes. */
+export function solid(piece: MultiPolygon, depth: number): boolean {
+  const core = offsetPolygons(piece, -depth / 2);
+  if (core.length !== 1) return false;
+  return area(offsetPolygons(core, depth / 2)) >= SOLID * area(piece);
+}
+const SOLID = 0.85;
+
+/** How much of its oriented box a piece fills (1 for a rectangle, 0.5 for a right triangle). */
+export function fill(piece: MultiPolygon): number {
+  const b = obb(piece);
+  return b.long * b.short > 0 ? area(piece) / (b.long * b.short) : 0;
+}
+const SQUARE = 0.7, SQUARE_KEEP = 0.9;
+
+/** Does the cut meet the outline at each end (of those in `which`: the road ends) at `MIN_ANGLE` or more? Slanted junctions leave
+ *  wedge-shaped blocks. */
+export function squareEnds(piece: MultiPolygon, line: Point2[], which: boolean[] = [true, true]): boolean {
+  const ends: [Point2, Point2][] = [[line[0], line[1]], [line[line.length - 1], line[line.length - 2]]];
+  return ends.every(([e, prev], i) => {
+    if (!which[i]) return true; // an open end makes no junction
+    let best: [Point2, Point2] | null = null, bd = Infinity;
+    for (const poly of piece) for (const r of poly) for (let i = 0; i < r.length; i++) {
+      const a = r[i], b = r[(i + 1) % r.length];
+      const d = sideOf([a, b], e).d;
+      if (d < bd) { bd = d; best = [a, b]; }
+    }
+    if (!best) return true;
+    const ex = best[1][0] - best[0][0], ez = best[1][1] - best[0][1], cx = e[0] - prev[0], cz = e[1] - prev[1];
+    const s = Math.abs(ex * cz - ez * cx) / ((Math.hypot(ex, ez) * Math.hypot(cx, cz)) || 1);
+    return s >= Math.sin(MIN_ANGLE);
+  });
+}
+const MIN_ANGLE = (50 * Math.PI) / 180;
+const STUB = 25; // m
+
+/** Re-aim the first end of a cut square to the outline: a stub `len` long along the inward normal,
+ *  then on to the cut where it is half again that far from the end. */
+export function squareStub(piece: MultiPolygon, line: Point2[], len: number): Point2[] | null {
+  const e = line[0];
+  let best: [Point2, Point2] | null = null, bd = Infinity;
+  for (const poly of piece) for (const r of poly) for (let i = 0; i < r.length; i++) {
+    const d = sideOf([r[i], r[(i + 1) % r.length]], e).d;
+    if (d < bd) { bd = d; best = [r[i], r[(i + 1) % r.length]]; }
+  }
+  if (!best) return null;
+  const ex = best[1][0] - best[0][0], ez = best[1][1] - best[0][1], L = Math.hypot(ex, ez) || 1;
+  // Rings keep the interior on the left.
+  const stub: Point2 = [e[0] - (ez / L) * len, e[1] + (ex / L) * len];
+  const k = line.findIndex(p => Math.hypot(p[0] - e[0], p[1] - e[1]) >= 1.5 * len);
+  if (k < 1) return null;
+  return [e, stub, ...line.slice(k)];
+}
 
 /** Extend only the last end of a polyline. */
 function extendEnd(line: Point2[], by: number): Point2[] {

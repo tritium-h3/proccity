@@ -9,8 +9,10 @@ import { area, bounds, containsPoint } from '../../grammar/polygon.js';
 import { makeSlab } from '../../grammar/slab.js';
 import type { DistrictType } from '../districts/rules.js';
 import type { Stage } from '../types.js';
-import { divideSuperblock, straightCutter, type BlockSettings, type DivideCtx, type Street } from './divide.js';
+import { divideSuperblock, type BlockSettings, type DivideCtx, type Street } from './divide.js';
 import { classifyBoundary, runsOf } from './edges.js';
+import { makeField } from './field.js';
+import { heightRaster } from './height.js';
 import { extend } from './geometry.js';
 import { RoadIndex } from './roads.js';
 import { familyOf, smallestLot, type Developed } from './rules.js';
@@ -44,6 +46,8 @@ export const blocks: Stage = {
     // Arterials, as the roads every first cut must end on.
     let arterialHalf = 12.5;
     walk(tree, n => { if (n.kind === 'arterial' && typeof n.attrs.width === 'number') arterialHalf = n.attrs.width / 2; });
+    const site0 = bounds(tree.geometry.footprint);
+    const height = heightRaster(tree, (site0.maxX - site0.minX) / 500);
     const roads = new RoadIndex();
     for (const r of tree.data?.roads ?? []) roads.add({ points: r.points, category: 'A', half: arterialHalf });
 
@@ -105,7 +109,8 @@ export const blocks: Stage = {
       const type = attr(sb, 'type') as Developed;
       const lot = smallestLot(type);
       const ctx: DivideCtx = {
-        family: familyOf(type), s, minBlockArea: lot.area, minDepth: lot.depth, rng, roads, cutter: straightCutter,
+        family: familyOf(type), s, minBlockArea: lot.area, minDepth: lot.depth, rng, roads,
+        field: makeField(height, familyOf(type), s.localGrade / 100), height,
         openAt: p => !!borders.get(sb.id)!.open.at(p),
       };
       const border = borders.get(sb.id)!;
