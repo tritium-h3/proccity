@@ -36,10 +36,12 @@ describe('blocks stage', () => {
       developed++;
       expect(n.children.length, n.id).toBeGreaterThan(0);
       if (n.children.length > 1) divided++;
-      // 1 mm per metre of outline, as districts allow: Clipper rounds to the millimetre.
-      const tol = (outline(n) * 1e-3) / area(n.geometry.footprint);
+      // 1 mm per metre of outline, as districts allow: Clipper rounds to the millimetre. Counted on
+      // the children's outlines (each shared edge once): a hundred blocks' edges each round.
+      const edges = (outline(n) + n.children.reduce((m, k) => m + outline(k), 0)) / 2;
+      const tol = (edges * 1e-3) / area(n.geometry.footprint);
       const check = checkPartition(n.geometry, n.children.map(k => k.geometry), Math.max(1e-6, tol));
-      expect(check.problems, n.id).toEqual([]);
+      expect(check.problems.map(p => p.slice(0, 300)), n.id).toEqual([]);
       const lot = smallestLot(type as Developed);
       const blocks = n.children.filter(k => k.kind === 'block');
       if (blocks.length > 1) for (const b of blocks) expect(area(b.geometry.footprint), b.id).toBeGreaterThanOrEqual(lot.area);
