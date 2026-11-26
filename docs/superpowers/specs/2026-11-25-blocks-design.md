@@ -217,5 +217,9 @@ sparse blocks, compact storage, a smaller default site). The plan doesn't degrad
   Left for the owner to judge.
 - Block sizes stay at the proposed defaults (dense 70 × 160 m, sparse 120 × 400 m): the owner
   prefers more lots per block.
-- About 5–10% of developed land is still in blocks over 20 ha, mostly steep Town core slopes where
-  no cut keeps under the 10% local grade.
+- **Steep ground (revised with the owner):** Town cores may sit on slopes of 30%+, which the 10%
+  local grade made uncuttable (100 ha single blocks). The Max grade is now a preference: metres
+  over it cost, and only past 3× it is a road refused; the field snaps to the contour grid rather
+  than make oblique slivers, and on ground past the ceiling runs up it on the diagonal at the
+  ceiling. Developed land in blocks over 20 ha: 0–4% (seeds 1–3).
+- Road shades: arterials near-black, collectors dark grey, locals light grey (the owner's ask).

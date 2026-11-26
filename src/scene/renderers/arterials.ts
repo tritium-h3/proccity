@@ -14,7 +14,7 @@ import { heightSampler } from '../heightSampler.js';
 import type { RenderContext, Rendered, StageRenderer } from './index.js';
 import { DISTRICT_COLOUR, rgbaOf, tintedTerrain } from './tint.js';
 
-const ASPHALT = 0x3a3a3e;
+const ASPHALT = 0x1c1c1e; // near-black: arterials, darkest of the road shades (collectors, locals: blocks.ts)
 const DECK = 0x55555a;
 // Above the drawn ground: its shader displaces up to 0.75 m, and the sampler interpolates.
 const LIFT = 2;
