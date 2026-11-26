@@ -7,7 +7,8 @@ district table and road facing (Financial corrected to UO, UCO, UCOR).
 
 ## Why
 
-Arterials divide each district into superblocks (about 2 km across at the 30 km default). This
+Arterials divide each district into superblocks (about 1 km across, a median near 125 ha, at the
+10 km default). This
 stage divides each superblock into blocks with collectors and local roads, and gives every block a
 zone. Zones decide what the next stages build: lots, then buildings. The owner wants:
 
@@ -38,15 +39,17 @@ zone. Zones decide what the next stages build: lots, then buildings. The owner w
   road the block borders, chosen at random weighted by the district's use frequencies.
   Independent per block (no pull towards neighbours).
 - Residential lots never face an arterial (deliberate, the owner's rule).
-- It works at 30 km: generation and drawing stay within a budget we measure and record.
+- It works at the 10 km default, and still at 30 km (slower): generation and drawing stay within a
+  budget we measure and record.
 
 ## Non-goals
 
+- Per-district block settings in the editor (only zone pins).
 - Lots, buildings, parks, civic uses. Only houses, commercial and offices (the zones in the notes).
 - Anything in Undeveloped districts: they stay as they are.
 - Collector or local road networks that cross arterials as one continuous street (each superblock
   is divided on its own, apart from the shared border streets below).
-- Changing arterials or the site size default (the owner may revisit 30 km if the budget bites).
+- Changing arterials or the defaults (10 km since 2026-11-25).
 
 ## Anti-goals
 
@@ -139,6 +142,17 @@ pick falls back to the remaining valid zones (counted). If no zone is valid at a
 block bordered only by arterials), the block is unzoned (`zone: null`, counted) and left as open
 land.
 
+### Editing: zone pins
+
+The user can pin a block's zone, as with district types (`overridable: { block: [zone] }`).
+Overrides re-attach by anchor point when blocks regenerate (the existing `pipeline/overrides.ts`),
+with a toast when one is dropped. A pin is honoured only where the generator could have chosen
+it: the district allows the zone, and the block borders a road category its lots may face
+(`validateOverride` gives the reason otherwise). Zones are picked independently per block, so a
+pin changes nothing around it, and the blocks' geometry doesn't depend on zones, so pinning never
+reshapes the cuts. Per-district block settings (spacing family, collector spacing, cul-de-sacs)
+are not editable for now.
+
 ### Settings (proposed)
 
 - Collector width 18 m, local road width 12 m (including verges).
@@ -151,7 +165,8 @@ land.
 
 ### Scale and budget
 
-At 30 km there may be tens of thousands of blocks. Targets to measure in the plan's first task
+At the 10 km default, roughly 50 km² is developed: a few thousand blocks (dense blocks around
+1–2 ha, sparse ones several). At 30 km, nine times the area, it may be tens of thousands. Targets to measure in the plan's first task
 and record here: generation time (aim: a few seconds in Node, like arterials), block count, and
 triangles drawn. Local roads likely can't each be a ribbon like arterials; collectors may be. The
 renderer can tint blocks by zone from a baked texture, as districts do.
