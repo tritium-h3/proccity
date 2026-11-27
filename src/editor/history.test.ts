@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Override } from '../doc/types.js';
 import { FAKE_STAGES as STAGES } from '../stages/testing.js';
-import { History, regenerateFrom, type EditState } from './history.js';
+import { clearAfter, History, regenerateFrom, type EditState } from './history.js';
 
 const base = (): EditState => ({
   seed: 1, site: { size: 2000 }, generatedThrough: 1, overrides: [],
@@ -106,5 +106,18 @@ describe('History.depth (review: Important 3)', () => {
     h.push(withCells(5));
     h.undo();
     expect(h.depth).toBe(1);
+  });
+});
+
+describe('clearAfter', () => {
+  it('ungenerates later stages and drops their overrides, keeping this stage’s and earlier ones', () => {
+    const later: Override = { ...O, id: 'o2', stage: 'fake-split', kind: 'room' };
+    const s = clearAfter({ ...base(), overrides: [O, later] }, 0, STAGES);
+    expect(s.generatedThrough).toBe(0);
+    expect(s.overrides.map(o => o.id)).toEqual(['o1']);
+  });
+  it('keeps overrides of stages it doesn’t know (retired ones ride along untouched)', () => {
+    const odd: Override = { ...O, id: 'o3', stage: 'retired' };
+    expect(clearAfter({ ...base(), overrides: [odd] }, 0, STAGES).overrides).toHaveLength(1);
   });
 });

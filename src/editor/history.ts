@@ -18,6 +18,14 @@ export function editStateOf(doc: CityDoc): EditState {
   return structuredClone({ seed, site, stages, overrides, generatedThrough });
 }
 
+/** "Clear after this": later stages are no longer generated, and their overrides go with them
+ *  (the owner: pins survive rerolling or changing a stage, not clearing what came after it).
+ *  Overrides of stages the registry doesn't know are left alone. */
+export function clearAfter(s: EditState, stageIndex: number, stages: Stage[]): EditState {
+  const later = new Set(stages.slice(stageIndex + 1).map(st => st.id));
+  return { ...s, generatedThrough: stageIndex, overrides: s.overrides.filter(o => !later.has(o.stage)) };
+}
+
 export class History {
   private past: EditState[] = [];
   private future: EditState[] = [];

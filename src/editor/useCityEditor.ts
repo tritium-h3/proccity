@@ -15,7 +15,7 @@ import { defaultsFor } from '../stages/settings.js';
 import { createAutosaver, type SaveState } from '../storage/autosave.js';
 import * as db from '../storage/db.js';
 import { downloadCity, importCityAndSave, readFileText } from '../storage/file.js';
-import { combineFrom, editStateOf, History, regenerateFrom, type EditState } from './history.js';
+import { clearAfter as clearAfterState, combineFrom, editStateOf, History, regenerateFrom, type EditState } from './history.js';
 import { isTextEntry } from './keys.js';
 import { normalizeStages } from './normalize.js';
 
@@ -316,7 +316,7 @@ export function useCityEditor() {
     clearAfter(stageIndex: number) {
       setCurrentStage(c => Math.min(c, stageIndex));
       select(null);
-      edit(s => { s.generatedThrough = stageIndex; });
+      edit(s => { Object.assign(s, clearAfterState(s, stageIndex, STAGES)); });
     },
     selectStage(i: number) {
       setCurrentStage(i);
