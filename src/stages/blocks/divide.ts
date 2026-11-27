@@ -10,12 +10,11 @@ import type { Field } from './field.js';
 import type { HeightRaster } from './height.js';
 import type { RoadIndex } from './roads.js';
 import { traceCut } from './trace.js';
+import { spacing, type SpacingSettings } from '../subdistricts/rules.js';
 import type { Family } from './rules.js';
 
-export interface BlockSettings {
+export interface BlockSettings extends SpacingSettings {
   collectorWidth: number; localWidth: number;
-  denseDepth: number; denseLength: number; sparseDepth: number; sparseLength: number;
-  denseCollectors: number; sparseCollectors: number;
   localGrade: number;
 }
 
@@ -23,7 +22,10 @@ export interface Street { points: Point2[]; category: 'C' | 'L'; width: number }
 
 
 export interface DivideCtx {
+  /** how cuts follow the terrain (plan direction or contours) */
   family: Family;
+  /** the sub-district's density step: block size and collector spacing */
+  step: number;
   s: BlockSettings;
   /** a block must hold one lot of its district's smallest zone */
   minBlockArea: number;
@@ -99,10 +101,8 @@ function crosses(l: Point2[]): boolean {
   return false;
 }
 
-/** The family's block size: depth (short side) and length (long side). */
-export const targets = (ctx: DivideCtx) => (ctx.family === 'sparse'
-  ? { depth: ctx.s.sparseDepth, length: ctx.s.sparseLength, collectors: ctx.s.sparseCollectors }
-  : { depth: ctx.s.denseDepth, length: ctx.s.denseLength, collectors: ctx.s.denseCollectors });
+/** The step's block size: depth (short side) and length (long side), and collector spacing. */
+export const targets = (ctx: DivideCtx) => spacing(ctx.step, ctx.s);
 
 // A piece is cut while its side exceeds this multiple of the target; below it, it's a block.
 const SLACK = 1.4;

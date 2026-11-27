@@ -12,7 +12,8 @@ Stages so far: **terrain**, now v2 (`docs/superpowers/specs/2026-11-21-terrain-v
 v1's height-grid design is superseded), and **districts**
 (`docs/superpowers/specs/2026-11-23-districts-design.md`; the owner's zoning notes are in
 `docs/notes/zoningBlocks.md`), **arterials**
-(`docs/superpowers/specs/2026-11-23-arterials-design.md`) and **blocks**
+(`docs/superpowers/specs/2026-11-23-arterials-design.md`), **sub-districts**
+(`docs/superpowers/specs/2026-11-27-subdistricts-design.md`) and **blocks**
 (`docs/superpowers/specs/2026-11-25-blocks-design.md`). Each real stage is designed with the
 owner one at a time.
 
@@ -64,7 +65,8 @@ Lots come next.
   Three.js. Test-only fake stages live in `stages/testing.ts` and are never in `STAGES`. Attributes
   inherit down the tree through `resolveAttr` (own > ancestors > stage setting).
   **Adding a stage:** a module, a line in `stages/index.ts`, and a renderer in
-  `scene/renderers/`.
+  `scene/renderers/`. A stage inserted mid-pipeline steps older saved cities back to just before it
+  (`editor/normalize.ts`), since `generatedThrough` is an index.
 - **`stages/terrain/` (v2, all polygons):**
   - `water.ts`: the sea and river carve the site, with a gentle coast and a monotonic river
     profile.
@@ -108,7 +110,7 @@ Lots come next.
 
   **Polygon budget: terrain draws about 6,000 triangles (ground plus water surfaces), so later
   stages get the budget.** It's slightly over at 30 km because of the riverbed. Check new
-  terrain detail against it. Arterial ribbons add about 8,000 at 30 km. Blocks add none (tinted).
+  terrain detail against it. Arterial ribbons add about 8,000 at 30 km. Sub-districts and blocks add none (tinted).
 
   **Fine detail is cosmetic, in the renderer's shader. Never add it to the geometry.**
 - **`stages/districts/`:** each terrain land region is cut into districts (hills stay whole,
@@ -227,17 +229,42 @@ Lots come next.
       ends. Roads are cut out of districts (`arterial` + `superblock`) and the river (`bridge`
       + `water`). `data.roads` keeps the centrelines (with `how`, for diagnosis); the stats count compromises (`deadEnds`
       should be 0).
-- **`stages/blocks/`:** each developed superblock is divided by collectors, then local roads,
-  by recursive cuts, into blocks, and each block gets a zone. The zone tables, district zones,
-  road facing and use weights are in `rules.ts`, copied from the owner's notes
-  (`docs/notes/zoningBlocks.md` is the source of truth). Undeveloped superblocks are left alone.
-  - `edges.ts`: a superblock's outline is arterial, **border** (another developed district: every
-    border gets a shared collector, half each side, since every block must face a road) or
-    **open** (water, Undeveloped land, the site edge). Blocks meet open land with a rough edge;
-    the owner wants rough outskirts and no shore or park-edge roads.
+- **`stages/subdistricts/`:** density within districts. The owner wants gradients (density
+  spreading out over an area, stepping partway at an edge) and open land appearing as the city
+  thins, but **no core-to-edge gradient and no rings**: density comes from neighbouring districts
+  only. Each developed superblock over 1.5 × Sub-district size (150 ha) is cut (the districts'
+  Voronoi, `districts/cut.ts`) into sub-districts, each with a density **step** or Undeveloped.
+  - `rules.ts`: the **ladder**, steps 1 (sparsest) to 9 (densest), one scale for every type; each
+    type covers a few (its levels, level 1 densest: Financial 9–8, Rural 1 only). Codes are the
+    type's letter and the step (**F9**; **U0** is an Undeveloped piece of an Urban district), names
+    the type and a level word (**Financial High**). A step sets **spacing only** (block size,
+    collector spacing, and later lot size together with the zone); buildings follow the zone.
+  - `field.ts`: the implied density field. Each district's nominal density (mid-range; Undeveloped
+    0), blurred over half a district's width, normalised over land (water and the site edge don't
+    thin it: that would bring back a ring), plus noise (Variation).
+  - `assign.ts`: a step is the type's nominal plus 1.5 × the piece's difference from its
+    **district's mean** field (on the raw field the densest type, whose neighbours are always
+    sparser, never reached its top level). Undeveloped is likelier where the raw field is low and
+    in sparser types (`OPEN`; never Financial unpinned), refused if it cuts a developed piece off
+    from the arterials or empties a district. Pins (`overridable.subdistrict.step`) apply first.
+  - Attrs `step` (a string: the pipeline writes choice overrides straight into attrs), `code`,
+    `label`, `district`. Site data `subdistrictStats`.
+- **`stages/blocks/`:** each developed **sub-district** is divided by collectors, then local
+  roads, by recursive cuts, into blocks, and each block gets a zone. The zone tables, district
+  zones, road facing and use weights are in `rules.ts`, copied from the owner's notes
+  (`docs/notes/zoningBlocks.md` is the source of truth). Undeveloped sub-districts and
+  superblocks are left alone.
+  - `edges.ts`: a sub-district's outline is arterial, **border** (another developed
+    sub-district: every border gets a shared collector, half each side, since every block must
+    face a road), **edge** (an Undeveloped sub-district beside a dense type: a whole collector on
+    this side, "big lots, then across the street nothing") or **open** (water, Undeveloped land,
+    the site edge, and Undeveloped sub-districts beside Suburban or Rural). Blocks meet open land
+    with a rough edge; the owner wants rough outskirts and no shore or park-edge roads.
   - `divide.ts`: largest piece first, cut across its long side while it's long, then along it
-    while it's deep, positioned so blocks come out near the target size (two families: sparse for
-    Suburban and Rural, dense for the rest). A collector while the piece is longer than the
+    while it's deep, positioned so blocks come out near the target size. Block depth, length and
+    collector spacing come from the step, geometric between the Densest (step 9) and Sparsest
+    (step 1) settings (`spacing`); the smallest lot grows with `lotFactor` (interim, until lots).
+    The family (sparse: Suburban and Rural) only decides how cuts follow the terrain. A collector while the piece is longer than the
     collector spacing and both halves hold two rows of blocks, else a local road. A road meets a
     road at one end at least; the other may end on open land. Candidates: each planned line (every
     stretch across an odd shape), traced along the field, then straight, then square off the
@@ -297,7 +324,7 @@ Lots come next.
   renderer reuses the terrain renderer (`buildTerrain` with a tint) and colours it from a
   texture baked from the district footprints (`scene/rasterise.ts`, shared via
   `renderers/tint.ts`), so **districts add no triangles**. Arterials tint superblocks and road
-  strips with their district's colour. Blocks tint zones and streets into a 4096 px texture (2.4 m a pixel at 10 km) and reuse the
+  strips with their district's colour. Sub-districts tint the same way, paler as the step falls. Blocks tint zones and streets into a 4096 px texture (2.4 m a pixel at 10 km) and reuse the
   arterial ribbons (`addArterials`). Roads themselves are **ribbons** draped on the ground
   as drawn (`scene/heightSampler.ts`, from the smoothed mesh), sampled every site/300. They
   run at deck height over bridges. Bridge decks are geometry too. At 30 km a road is under 2

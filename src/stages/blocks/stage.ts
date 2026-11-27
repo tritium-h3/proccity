@@ -1,5 +1,6 @@
-// Blocks: stage 4. Each developed superblock is divided by collectors, then local roads, by
-// recursive cuts running from road to road, into blocks; each block gets a zone.
+// Blocks: stage 5. Each developed sub-district is divided by collectors, then local roads, by
+// recursive cuts running from road to road, into blocks sized by its density step; each block
+// gets a zone.
 // Design: docs/superpowers/specs/2026-11-25-blocks-design.md (zones: docs/notes/zoningBlocks.md)
 
 import { childId, walk } from '../../doc/tree.js';
@@ -14,7 +15,8 @@ import { divideSuperblock, HARD_GRADE, type BlockSettings, type DivideCtx, type 
 import { classifyBoundary, runsOf } from './edges.js';
 import { makeField } from './field.js';
 import { heightRaster } from './height.js';
-import { extend } from './geometry.js';
+import { extend, offsetPath } from './geometry.js';
+import { lotFactor } from '../subdistricts/rules.js';
 import { RoadIndex } from './roads.js';
 import { DISTRICT_ZONES, FACES, familyOf, smallestLot, ZONES, type Category, type Developed, type Zone } from './rules.js';
 import { facesOf, pickZone, zoneFits } from './zones.js';
@@ -30,12 +32,12 @@ export const blocks: Stage = {
   settings: [
     { key: 'collectorWidth', label: 'Collector width', type: 'number', min: 12, max: 30, step: 1, default: 18, unit: 'm', help: 'Including verges' },
     { key: 'localWidth', label: 'Local road width', type: 'number', min: 8, max: 20, step: 1, default: 12, unit: 'm', help: 'Including verges' },
-    { key: 'denseDepth', label: 'Dense block depth', type: 'number', min: 40, max: 200, step: 5, default: 70, unit: 'm', help: 'Town, urban and financial districts' },
-    { key: 'denseLength', label: 'Dense block length', type: 'number', min: 50, max: 400, step: 10, default: 160, unit: 'm' },
-    { key: 'sparseDepth', label: 'Sparse block depth', type: 'number', min: 60, max: 300, step: 5, default: 120, unit: 'm', help: 'Suburban and rural districts' },
-    { key: 'sparseLength', label: 'Sparse block length', type: 'number', min: 80, max: 1000, step: 10, default: 400, unit: 'm' },
-    { key: 'denseCollectors', label: 'Dense collector spacing', type: 'number', min: 200, max: 1000, step: 25, default: 400, unit: 'm' },
-    { key: 'sparseCollectors', label: 'Sparse collector spacing', type: 'number', min: 300, max: 2000, step: 50, default: 700, unit: 'm' },
+    { key: 'densestDepth', label: 'Densest block depth', type: 'number', min: 40, max: 200, step: 5, default: 70, unit: 'm', help: 'At density step 9; steps between are interpolated' },
+    { key: 'densestLength', label: 'Densest block length', type: 'number', min: 50, max: 400, step: 10, default: 160, unit: 'm' },
+    { key: 'densestCollectors', label: 'Densest collector spacing', type: 'number', min: 200, max: 1000, step: 25, default: 400, unit: 'm' },
+    { key: 'sparsestDepth', label: 'Sparsest block depth', type: 'number', min: 60, max: 400, step: 5, default: 150, unit: 'm', help: 'At density step 1' },
+    { key: 'sparsestLength', label: 'Sparsest block length', type: 'number', min: 80, max: 1500, step: 10, default: 500, unit: 'm' },
+    { key: 'sparsestCollectors', label: 'Sparsest collector spacing', type: 'number', min: 300, max: 3000, step: 50, default: 900, unit: 'm' },
     { key: 'localGrade', label: 'Max grade', type: 'number', min: 4, max: 20, step: 1, default: 10, unit: '%', help: 'For collectors and local roads' },
   ],
 
@@ -69,88 +71,123 @@ export const blocks: Stage = {
     for (const r of tree.data?.roads ?? []) roads.add({ points: r.points, category: 'A', half: arterialHalf });
 
     const streets: StreetData[] = [];
-    const stats: Record<string, number> = { superblocks: 0, blocks: 0, collectors: 0, locals: 0, borderStreets: 0, withCollectors: 0, unzoned: 0, zoneRestricted: 0, roadless: 0, roadlessHa: 0 };
+    const stats: Record<string, number> = { subdistricts: 0, blocks: 0, collectors: 0, locals: 0, borderStreets: 0, edgeStreets: 0, withCollectors: 0, unzoned: 0, zoneRestricted: 0, roadless: 0, roadlessHa: 0 };
     const superblocks = leaves
-      .filter(n => n.kind === 'superblock' && attr(n, 'type') !== 'undeveloped')
+      .filter(n => n.kind === 'subdistrict' && n.attrs.step !== '0')
       .sort((a, b) => a.id.localeCompare(b.id));
 
-    // 1. Shared border streets, for every superblock before any is divided: each side cuts half a
-    //    collector along a border with another developed district, and together they make one
-    //    street. Both sides find the same border line, so the street is recorded once.
-    const dists: { id: string; developed: boolean; fp: MultiPolygon; b: ReturnType<typeof bounds> }[] = [];
-    walk(tree, n => { if (n.kind === 'district') dists.push({ id: n.id, developed: n.attrs.type !== 'undeveloped', fp: n.geometry.footprint, b: bounds(n.geometry.footprint) }); });
-    const districtAt = (p: Point2) => dists.find(d => p[0] >= d.b.minX && p[0] <= d.b.maxX && p[1] >= d.b.minZ && p[1] <= d.b.maxZ && containsPoint(d.fp, p));
+    // 1. Shared border streets, for every sub-district before any is divided: each side cuts half a
+    //    collector along a border with another developed sub-district, and together they make one
+    //    street. Both sides find the same border line, so the street is recorded once. Beside an
+    //    Undeveloped sub-district a dense one takes a whole collector (`edge`): there's no block
+    //    stage on the other side to take half.
+    type Area = { id: string; developed: boolean; fp: MultiPolygon; b: ReturnType<typeof bounds> };
+    const areaOf = (n: RegionNode, developed: boolean): Area => ({ id: n.id, developed, fp: n.geometry.footprint, b: bounds(n.geometry.footprint) });
+    const dists: Area[] = [], subs: Area[] = [];
+    walk(tree, n => {
+      if (n.kind === 'district') dists.push(areaOf(n, n.attrs.type !== 'undeveloped'));
+      if (n.kind === 'subdistrict') subs.push(areaOf(n, n.attrs.step !== '0'));
+    });
+    const find = (list: Area[], p: Point2) => list.find(d => p[0] >= d.b.minX && p[0] <= d.b.maxX && p[1] >= d.b.minZ && p[1] <= d.b.maxZ && containsPoint(d.fp, p));
     const half = s.collectorWidth / 2;
     const site = bounds(tree.geometry.footprint);
     const offSite = (p: Point2) => p[0] < site.minX || p[0] > site.maxX || p[1] < site.minZ || p[1] > site.maxZ;
     const water = tree.children.filter(n => ['sea', 'river', 'pond'].includes(n.kind)).map(n => n.geometry.footprint);
-    const borders = new Map<string, { lines: Point2[][]; strips: MultiPolygon[]; pieces: MultiPolygon[]; open: RoadIndex }>();
+    const borders = new Map<string, { lines: Point2[][]; strips: MultiPolygon[]; edges: Point2[][]; edgeStrips: MultiPolygon[]; pieces: MultiPolygon[]; open: RoadIndex }>();
     const seen = new Set<string>();
+    const streetIds = new Map<string, string>();
     const key = (line: Point2[]) => [line[0], line[line.length - 1]].map(p => `${Math.round(p[0])},${Math.round(p[1])}`).sort().join('|');
     for (const sb of superblocks) {
-      const own = sb.id.slice(0, sb.id.lastIndexOf('/'));
+      const dense = familyOf(attr(sb, 'type') as Developed) === 'dense';
       const runs = classifyBoundary(sb.geometry.footprint, (mid, out) => {
         if (roads.at(mid)) return 'A';
         const p: Point2 = [mid[0] + out[0] * PROBE, mid[1] + out[1] * PROBE];
         if (offSite(p) || water.some(w => containsPoint(w, p))) return 'open';
-        const d = districtAt(p);
-        if (!d) return 'none';
-        if (!d.developed) return 'open';
-        return d.id !== own ? 'border' : 'none';
+        const sub = find(subs, p);
+        if (sub) return sub.id === sb.id ? 'none' : sub.developed ? 'border' : dense ? 'edge' : 'open';
+        const d = find(dists, p);
+        return d && !d.developed ? 'open' : 'none';
       });
       // No arterial or border anywhere round it (a district the arterials never reached): any road
       // here would join nothing, so it stays one block.
-      if (!runs.flat().some(r => r.kind === 'A' || r.kind === 'border')) { stats.roadless++; stats.roadlessHa += Math.round(area(sb.geometry.footprint) / 1e4); }
+      if (!runs.flat().some(r => r.kind === 'A' || r.kind === 'border' || r.kind === 'edge')) { stats.roadless++; stats.roadlessHa += Math.round(area(sb.geometry.footprint) / 1e4); }
       const open = new RoadIndex();
       for (const line of runsOf(runs, 'open')) open.add({ points: line, category: 'L', half: 0 });
       const lines = runsOf(runs, 'border');
       const strips: MultiPolygon[] = [];
+      // Each strip takes only what earlier ones left: cut independently, strips overlapped where
+      // they met at a corner (an edge collector beside a border one, most often).
+      let claimed: MultiPolygon = [];
+      const claim = (strip: MultiPolygon) => {
+        const own = claimed.length && strip.length ? difference(strip, claimed) : strip;
+        if (area(own) > 0) claimed = union([...claimed, ...own], []);
+        return own;
+      };
       for (const line of lines) {
-        const strip = intersect(sb.geometry.footprint, offsetPolyline(extend(line, s.collectorWidth), half, 'butt'));
+        const strip = claim(intersect(sb.geometry.footprint, offsetPolyline(extend(line, s.collectorWidth), half, 'butt')));
         strips.push(strip);
         if (area(strip) > 0) roads.add({ points: line, category: 'C', half });
       }
-      const taken = union(strips.flat(), []);
+      const edges: Point2[][] = [], edgeStrips: MultiPolygon[] = [];
+      for (const line of runsOf(runs, 'edge')) {
+        const strip = claim(intersect(sb.geometry.footprint, offsetPolyline(extend(line, s.collectorWidth), s.collectorWidth, 'butt')));
+        if (area(strip) <= 0) continue;
+        // Rings keep the interior on their left, so a positive offset moves the centreline inwards.
+        const centre = offsetPath(line, half);
+        edges.push(centre);
+        edgeStrips.push(strip);
+        roads.add({ points: centre, category: 'C', half });
+      }
+      const taken = union([...strips, ...edgeStrips].flat(), []);
       const rest = taken.length ? difference(sb.geometry.footprint, taken) : sb.geometry.footprint;
       // Crumbs where a strip's end meets an arterial at a slant join the strip, not a block.
       const pieces: MultiPolygon[] = [];
       for (const poly of rest) {
         if (area([poly]) < CRUMB && strips.length) strips[0] = union(strips[0], [poly]);
+        else if (area([poly]) < CRUMB && edgeStrips.length) edgeStrips[0] = union(edgeStrips[0], [poly]);
         else pieces.push([poly]);
       }
-      borders.set(sb.id, { lines, strips, pieces, open });
+      borders.set(sb.id, { lines, strips, edges, edgeStrips, pieces, open });
     }
 
     // 2. Divide each superblock.
     for (const sb of superblocks) {
       const type = attr(sb, 'type') as Developed;
-      const lot = smallestLot(type);
+      const step = Number(sb.attrs.step);
+      // Interim: the smallest lot grows as the step falls (the lots stage will own lot size).
+      const lot = smallestLot(type), f = lotFactor(step);
       const ctx: DivideCtx = {
-        family: familyOf(type), s, minBlockArea: lot.area, minDepth: lot.depth, rng, roads,
+        family: familyOf(type), step, s, minBlockArea: lot.area * f * f, minDepth: lot.depth * f, rng, roads,
         field: makeField(height, familyOf(type), s.localGrade / 100, (HARD_GRADE * s.localGrade) / 100), height,
         openAt: p => !!borders.get(sb.id)!.open.at(p),
       };
       const border = borders.get(sb.id)!;
       const out = divideSuperblock(border.pieces, ctx);
       for (const [k, v] of Object.entries(out.stats)) stats[k] = (stats[k] ?? 0) + v;
-      stats.superblocks++;
+      stats.subdistricts++;
       // A superblock no cut fits is still a block (one child), so it gets a zone like any other.
       const kids: RegionNode[] = [];
       const node = (name: string, kind: string, footprint: MultiPolygon, attrs: Settings): RegionNode =>
         ({ id: childId(sb.id, name), name, kind, stage: 'blocks', geometry: makeSlab(footprint), attrs, children: [] });
       const count = { collector: 0, local: 0 };
-      const addStreet = (st: Street, strip: MultiPolygon, record: boolean) => {
+      const addStreet = (st: Street, strip: MultiPolygon, record: boolean, extra: Settings = {}) => {
         const kind = st.category === 'C' ? 'collector' : 'local';
-        const id = `st:${streets.length}`;
-        if (record) streets.push({ id, ...st });
-        kids.push(node(`${kind}:${count[kind]++}`, kind, strip, { road: id, width: st.width }));
+        // A shared border street keeps the id it was first recorded under.
+        const id = record ? `st:${streets.length}` : streetIds.get(key(st.points)) ?? `st:${streets.length}`;
+        if (record) { streets.push({ id, ...st }); streetIds.set(key(st.points), id); }
+        kids.push(node(`${kind}:${count[kind]++}`, kind, strip, { road: id, width: st.width, district: type, ...extra }));
       };
       border.lines.forEach((line, i) => {
-        if (!border.strips[i]) return;
+        // A strip earlier strips took all of (or that missed the footprint) makes no region.
+        if (!border.strips[i] || area(border.strips[i]) <= 0) return;
         const k = key(line), first = !seen.has(k);
         seen.add(k);
         if (first) { stats.borderStreets++; stats.collectors++; }
         addStreet({ points: line, category: 'C', width: s.collectorWidth }, border.strips[i], first);
+      });
+      border.edges.forEach((line, i) => {
+        stats.edgeStreets++; stats.collectors++;
+        addStreet({ points: line, category: 'C', width: s.collectorWidth }, border.edgeStrips[i], true, { edge: true });
       });
       out.streets.forEach((st, i) => {
         addStreet(st, out.strips[i], true);

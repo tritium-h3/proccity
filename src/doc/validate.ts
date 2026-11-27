@@ -95,6 +95,9 @@ function checkNode(v: unknown, path: string) {
     if (v.data.blockStats !== undefined) {
       if (!isObj(v.data.blockStats) || !Object.values(v.data.blockStats).every(x => typeof x === 'number')) fail(`${path}.data.blockStats`, 'should map names to numbers');
     }
+    if (v.data.subdistrictStats !== undefined) {
+      if (!isObj(v.data.subdistrictStats) || !Object.values(v.data.subdistrictStats).every(x => typeof x === 'number')) fail(`${path}.data.subdistrictStats`, 'should map names to numbers');
+    }
     if (v.data.stats !== undefined) {
       if (!isObj(v.data.stats) || !Object.values(v.data.stats).every(x => typeof x === 'number')) fail(`${path}.data.stats`, 'should map names to numbers');
     }

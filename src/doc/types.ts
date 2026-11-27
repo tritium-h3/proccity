@@ -54,6 +54,8 @@ export interface RegionData {
   streets?: { id: string; points: Point2[]; category: 'C' | 'L'; width: number }[];
   /** the blocks stage's numbers (kept apart from `stats`, which the arterials stage owns on the site) */
   blockStats?: Record<string, number>;
+  /** the sub-districts stage's numbers */
+  subdistrictStats?: Record<string, number>;
 }
 
 export interface RegionNode {

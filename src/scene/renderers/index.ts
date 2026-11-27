@@ -7,6 +7,7 @@ import { renderArterials } from './arterials.js';
 import { renderBlocks } from './blocks.js';
 import { renderDistricts } from './districts.js';
 import { renderSite } from './site.js';
+import { renderSubdistricts } from './subdistricts.js';
 import { renderTerrain } from './terrain.js';
 
 export interface RenderContext {
@@ -33,5 +34,6 @@ export const RENDERERS: Record<string, StageRenderer> = {
   terrain: renderTerrain,
   districts: renderDistricts,
   arterials: renderArterials,
+  subdistricts: renderSubdistricts,
   blocks: renderBlocks,
 };
