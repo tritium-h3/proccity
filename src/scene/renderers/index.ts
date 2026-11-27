@@ -6,6 +6,7 @@ import type { Point2, RegionNode } from '../../doc/types.js';
 import { renderArterials } from './arterials.js';
 import { renderBlocks } from './blocks.js';
 import { renderDistricts } from './districts.js';
+import { renderLots } from './lots.js';
 import { renderSite } from './site.js';
 import { renderSubdistricts } from './subdistricts.js';
 import { renderTerrain } from './terrain.js';
@@ -36,4 +37,5 @@ export const RENDERERS: Record<string, StageRenderer> = {
   arterials: renderArterials,
   subdistricts: renderSubdistricts,
   blocks: renderBlocks,
+  lots: renderLots,
 };

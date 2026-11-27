@@ -3,6 +3,7 @@
 // zone's lots may face. Residential never faces an arterial: a deliberate rule, not realism.
 
 import type { DistrictType } from '../districts/rules.js';
+import { minLot } from '../lots/rules.js';
 
 export const ZONES = ['LR', 'LC', 'LO', 'HR', 'HC', 'HO', 'HCR', 'HCO', 'MR', 'MC', 'MO', 'MCR', 'UR', 'UO', 'UCR', 'UCO', 'UCOR'] as const;
 export type Zone = typeof ZONES[number];
@@ -54,15 +55,9 @@ export function zoneWeight(t: DistrictType, z: Zone): number {
 export type Family = 'sparse' | 'dense';
 export const familyOf = (t: DistrictType): Family => (t === 'suburban' || t === 'rural' ? 'sparse' : 'dense');
 
-/** Provisional smallest lots per density (metres); the lots stage will own the real ones. A
- *  block must hold at least one lot of its smallest zone. */
-export const MIN_LOT: Record<'L' | 'H' | 'M' | 'U', { frontage: number; depth: number }> = {
-  L: { frontage: 20, depth: 35 }, H: { frontage: 8, depth: 25 }, M: { frontage: 30, depth: 40 }, U: { frontage: 30, depth: 30 },
-};
-export const densityOf = (z: Zone) => z[0] as keyof typeof MIN_LOT;
-
-/** The smallest lot any of a district's zones allows (area and depth). */
-export function smallestLot(t: Developed): { area: number; depth: number } {
-  const lots = DISTRICT_ZONES[t].map(z => MIN_LOT[densityOf(z)]);
+/** The smallest lot any of a district's zones allows at this step (area and depth): a block must
+ *  hold at least one. From the lots stage's table, so the two stages agree. */
+export function smallestLot(t: Developed, step: number): { area: number; depth: number } {
+  const lots = DISTRICT_ZONES[t].map(z => minLot(z, step));
   return { area: Math.min(...lots.map(l => l.frontage * l.depth)), depth: Math.min(...lots.map(l => l.depth)) };
 }

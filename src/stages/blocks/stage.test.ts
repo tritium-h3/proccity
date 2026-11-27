@@ -40,7 +40,7 @@ describe('blocks stage', () => {
       const tol = (edges * 1e-3) / area(n.geometry.footprint);
       const check = checkPartition(n.geometry, n.children.map(k => k.geometry), Math.max(1e-6, tol));
       expect(check.problems.map(p => p.slice(0, 300)), n.id).toEqual([]);
-      const lot = smallestLot(type as Developed);
+      const lot = smallestLot(type as Developed, Number(n.attrs.step));
       const blocks = n.children.filter(k => k.kind === 'block');
       if (blocks.length > 1) for (const b of blocks) expect(area(b.geometry.footprint), b.id).toBeGreaterThanOrEqual(lot.area);
     });

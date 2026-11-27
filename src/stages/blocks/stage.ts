@@ -17,7 +17,6 @@ import { classifyBoundary, runsOf } from './edges.js';
 import { makeField } from './field.js';
 import { heightRaster } from './height.js';
 import { extend, offsetPath } from './geometry.js';
-import { lotFactor } from '../subdistricts/rules.js';
 import { RoadIndex } from './roads.js';
 import { DISTRICT_ZONES, FACES, familyOf, smallestLot, ZONES, type Category, type Developed, type Zone } from './rules.js';
 import { facesOf, pickZone, zoneFits } from './zones.js';
@@ -161,11 +160,11 @@ export const blocks: Stage = {
       const type = attr(sb, 'type') as Developed, family = familyOf(type);
       const step = Number(sb.attrs.step);
       if (!fields.has(family)) fields.set(family, makeField(height, family, s.localGrade / 100, (HARD_GRADE * s.localGrade) / 100));
-      // Interim: the smallest lot grows as the step falls (the lots stage will own lot size).
-      const lot = smallestLot(type), f = lotFactor(step);
+      // A block must hold one lot of its district's smallest zone (the lots stage's table).
+      const lot = smallestLot(type, step);
       const open = borders.get(sb.id)!.open;
       const ctx: DivideCtx = {
-        family, step, s, minBlockArea: lot.area * f * f, minDepth: lot.depth * f, rng, roads, junctions,
+        family, step, s, minBlockArea: lot.area, minDepth: lot.depth, rng, roads, junctions,
         field: fields.get(family), height, openAt: p => !!open.at(p),
       };
       for (const piece of borders.get(sb.id)!.pieces) items.push({ owner: sb.id, piece, ctx });
