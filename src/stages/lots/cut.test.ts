@@ -41,7 +41,8 @@ describe('cutting a block into lots', () => {
     const out = cutBlock(block, { target: { frontage: 7, depth: 20 }, allowed });
     partitions(block, out);
     for (const l of out.lots) expect(fronts(l, allowed)).toBe(true);
-    expect(out.lots.length).toBeGreaterThan(20);
+    // 40 m deep (open ground beyond), so at least 16 m wide: 12 lots.
+    expect(out.lots.length).toBeGreaterThanOrEqual(11);
   });
   it('leaves open ground in the middle of a very deep block', () => {
     const block = rect(0, 0, 300, 300), allowed = sides(300, 300, ['S', 'N', 'W', 'E']);
@@ -98,5 +99,13 @@ describe('cutting a block into lots', () => {
       expect(along, JSON.stringify(b)).toBeGreaterThanOrEqual(12 - 0.1);
     }
     expect(out.lots.length).toBeLessThanOrEqual(16);
+  });
+  it('widens deep lots: none more than 2.5 times deeper than it is wide', () => {
+    // Two rows 45 m deep (12 × 24 targets): at least 18 m of frontage each, so 6 a row, not 10.
+    const block = rect(0, 0, 120, 90), allowed = sides(120, 90, ['S', 'N']);
+    const out = cutBlock(block, { target: { frontage: 12, depth: 24 }, allowed });
+    partitions(block, out);
+    expect(out.lots.length).toBeLessThanOrEqual(12);
+    for (const l of out.lots) expect(obb(l).short, JSON.stringify(obb(l))).toBeGreaterThanOrEqual(45 / 2.5 - 0.2);
   });
 });

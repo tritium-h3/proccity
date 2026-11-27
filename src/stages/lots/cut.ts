@@ -22,6 +22,9 @@ const OFFSETS = [0, 0.1, -0.1, 0.2, -0.2];
 const SAMPLE = 2; // m between outline samples when finding frontage
 const SQUARE = 0.7, SQUARE_KEEP = 0.9;
 const KERF = 0.01; // m: cuts are a hair-thin band, merged back into one side
+// A lot is at most this many times deeper than its frontage (the owner: deep lots read as far
+// too skinny, too many buildings facing each road): a lot stretched back gets wider too.
+const ASPECT = 2.5;
 
 interface Run { points: { p: Point2; normal: Point2; len: number }[]; length: number }
 
@@ -123,6 +126,9 @@ export function cutBlock(block: MultiPolygon, ctxIn: LotCtx): { lots: MultiPolyg
   }
 
   const minArea = 0.5 * f * d, minSide = 0.5 * Math.min(f, d);
+  // The least frontage a lot of this piece may have: the target, or a fraction of its depth (its
+  // area over its frontage), whichever is more.
+  const minFront = (p: MultiPolygon, run: number) => Math.max(f, run > 0 ? area(p) / run / ASPECT : f);
   // Cheap tests first: frontage samples the road index all round the outline.
   const ok = (piece: MultiPolygon, sides: [MultiPolygon, MultiPolygon]) => {
     if (!sides.every(side => area(side) >= minArea && obb(side).short >= minSide)) return false;
@@ -131,7 +137,7 @@ export function cutBlock(block: MultiPolygon, ctxIn: LotCtx): { lots: MultiPolyg
       // The target frontage is a minimum (the owner, after seeing lots half that wide): lots
       // stretch rather than narrow.
       const run = frontage(side, ctx.allowed)[0]?.length ?? 0;
-      if (run < f - 0.1) return false;
+      if (run < minFront(side, run) - 0.1) return false;
       const final = rectWidth(side) <= SLACK * d && run <= SLACK * f;
       return !final || fill(side) >= need;
     });
@@ -162,7 +168,7 @@ export function cutBlock(block: MultiPolygon, ctxIn: LotCtx): { lots: MultiPolyg
     // Square to the street, a whole number of frontages from one end.
     for (const run of frontage(piece, ctx.allowed)) {
       // As many whole frontages as fit, so every lot is 1–2 frontages wide.
-      const n = Math.floor(run.length / f);
+      const n = Math.floor(run.length / minFront(piece, run.length));
       if (n < 2) break;
       const at = Math.floor(n / 2) / n;
       for (const o of OFFSETS) {
