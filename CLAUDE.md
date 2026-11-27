@@ -279,7 +279,7 @@ Lots come next.
     no other way and is over two target blocks (`ARTERIAL_FALLBACK`; the owner's notes disfavour
     but allow it). Block depth, length and
     collector spacing come from the step, geometric between the Densest (step 9) and Sparsest
-    (step 1) settings (`spacing`); the smallest lot grows with `lotFactor` (interim, until lots).
+    (step 1) settings (`spacing`); a block must hold one lot of its district's smallest zone (`smallestLot`, from the lots stage's table).
     The family (sparse: Suburban and Rural) only decides how cuts follow the terrain. A collector while the piece is longer than the
     collector spacing and both halves hold two rows of blocks, else a local road. A road meets a
     road at one end at least; the other may end on open land. Candidates: each planned line (every
