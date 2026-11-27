@@ -115,4 +115,12 @@ describe('dividing the site in one queue', () => {
     expect(locals).toBeGreaterThan(20);
     expect(out.stats.localOnArterial).toBeLessThan(0.15 * locals);
   });
+  it('gives a long strip between arterials a cross street, though it must end on them', () => {
+    // 900 × 100 m at step 3 (target 376 m long): under two target blocks in area, but over twice
+    // the target length. Kept whole, it was a kilometre of lots on one block.
+    const ctx = ringed(900, 100);
+    ctx.step = 3;
+    const out = divideAll([{ owner: '', piece: rect(0, 0, 900, 100), ctx }]);
+    expect(out.byOwner.get('')!.streets.length).toBeGreaterThan(0);
+  });
 });

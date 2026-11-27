@@ -277,7 +277,8 @@ Lot sectioning comes next.
     candidate whose end meets a road within half a block depth of a street ending across it is
     tried first moved to line up, whatever either road's category; a whole depth was measured
     worse. **Local roads keep off arterials** unless the piece can be cut
-    no other way and is over two target blocks (`ARTERIAL_FALLBACK`; the owner's notes disfavour
+    no other way and is over two target blocks or two target lengths (`ARTERIAL_FALLBACK`,
+    `ARTERIAL_LONG`: long strips between arterials stayed kilometre-long blocks; the owner's notes disfavour
     but allow it). Block depth, length and
     collector spacing come from the step, geometric between the Densest (step 9) and Sparsest
     (step 1) settings (`spacing`); a block must hold one lot of its district's smallest zone (`smallestLot`, from the lots stage's table).
