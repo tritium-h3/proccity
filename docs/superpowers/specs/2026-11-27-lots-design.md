@@ -175,3 +175,9 @@ Blocks rose 1–2% when `smallestLot` moved to this table (1,934 / 1,534 / 2,275
 **2026-11-27, later:** H-zone lots raised from 7 × 20 m to 10 × 25 m at step 9 (the owner: "the
 small lots are too small"). Lots 26,362 / 24,305 / 33,198; saved 12.4 / 11.3 / 15.5 MB; lots stage
 3.3–4.3 s; open ground 313–583 ha.
+
+**2026-11-27, later:** the target frontage is now a **minimum** (the owner found lots far too
+skinny: cuts were accepted down to half a frontage, and runs were split into the rounded number
+of frontages). A run is cut into as many whole frontages as fit, so lots are 1–2 frontages wide,
+and cut points are placed by length along the run (a sample's middle was up to half a sample off).
+Lots 24,029 / 22,120 / 30,070; saved 11.5 / 10.4 / 14.3 MB.

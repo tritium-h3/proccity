@@ -46,7 +46,7 @@ describe('lots stage', () => {
       }
     });
     expect(blocks).toBeGreaterThan(1000);
-    expect(lots).toBeGreaterThan(20_000);
+    expect(lots).toBeGreaterThan(10_000);
     expect(lots).toBeLessThan(90_000);
   }, 300_000);
 

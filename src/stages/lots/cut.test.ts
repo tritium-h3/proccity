@@ -88,4 +88,15 @@ describe('cutting a block into lots', () => {
     partitions(block, out);
     for (const l of out.lots) expect(obb(l).long, JSON.stringify(obb(l))).toBeLessThan(80);
   });
+  it('never fronts a lot on less than the target frontage: lots stretch instead', () => {
+    // 103 m of road each side, 12 m frontage: 8 lots a row of ~12.9 m, never 9 narrower ones.
+    const block = rect(0, 0, 103, 50), allowed = sides(103, 50, ['S', 'N']);
+    const out = cutBlock(block, { target: { frontage: 12, depth: 24 }, allowed });
+    partitions(block, out);
+    for (const l of out.lots) {
+      const b = obb(l), along = Math.abs(Math.cos(b.axis)) > 0.7 ? b.long : b.short; // x extent
+      expect(along, JSON.stringify(b)).toBeGreaterThanOrEqual(12 - 0.1);
+    }
+    expect(out.lots.length).toBeLessThanOrEqual(16);
+  });
 });

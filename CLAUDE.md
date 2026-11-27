@@ -311,7 +311,8 @@ Lot sectioning comes next.
   - `cut.ts` (the owner's approach C): a spine cut along the block where it's deeper than 1.4 lot
     depths and each row fronts along half the spine at least (repeated spines made strips fronting
     only on the block's ends); then cuts square to the frontage road at whole numbers of
-    frontages. Every cut leaves each piece on an allowed road, a minimum lot, and squareness as
+    frontages. **The target frontage is a minimum** (the owner: lots were far too skinny): lots
+    stretch to 1–2 frontages rather than narrow. Every cut leaves each piece on an allowed road, a minimum lot, and squareness as
     blocks. Cuts are straight, a hair-thin kerf merged into one side (exact partition). **Open
     ground** is the land more than twice the lot depth from an allowed road (the owner chose this
     over rear lots with access strips); measured from every edge, far sides on roads the zone
