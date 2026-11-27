@@ -8,7 +8,11 @@ import type { Developed } from '../blocks/rules.js';
 import { clampStep, OPEN } from './rules.js';
 
 export interface SubInfo {
-  type: Developed; district: string; field: number;
+  type: Developed; district: string;
+  /** the density field here: open land is likelier where it's low */
+  field: number;
+  /** the density this piece's step is rounded from (the field centred on its district's type) */
+  local: number;
   /** touches an arterial */
   arterial: boolean;
   /** this sub-district's own draw in [0, 1) */
@@ -17,7 +21,7 @@ export interface SubInfo {
 }
 
 export function assignSteps(subs: SubInfo[], neighbours: number[][], openLand: number): { steps: number[]; openRefused: number } {
-  const steps = subs.map(s => s.pin ?? clampStep(s.type, s.field));
+  const steps = subs.map(s => s.pin ?? clampStep(s.type, s.local));
   // Developed sub-districts that reach an arterial through developed ones.
   const reached = () => {
     const seen = new Set<number>();

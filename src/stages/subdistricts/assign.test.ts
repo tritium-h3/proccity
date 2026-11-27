@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assignSteps, type SubInfo } from './assign.js';
 
-const sub = (o: Partial<SubInfo>): SubInfo => ({ type: 'rural', district: 'd', field: 1, arterial: true, draw: 0.99, ...o });
+const sub = (o: Partial<SubInfo>): SubInfo => ({ type: 'rural', district: 'd', field: 1, arterial: true, draw: 0.99, ...o, local: o.local ?? o.field ?? 1 });
 
 describe('step assignment', () => {
   it('takes the field’s step within the type, or the pin', () => {

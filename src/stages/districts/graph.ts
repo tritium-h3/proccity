@@ -21,7 +21,7 @@ export interface DistrictGraph {
 }
 
 /** Length of the boundary two footprints share: the overlap of 1 m buffers is a strip 2 m wide. */
-function sharedLength(a: MultiPolygon, b: MultiPolygon): number {
+export function sharedLength(a: MultiPolygon, b: MultiPolygon): number {
   return area(intersect(offsetPolygons(a, 1), offsetPolygons(b, 1))) / 2;
 }
 

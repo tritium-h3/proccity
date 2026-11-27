@@ -9,7 +9,7 @@ function site(strips: [number, number, string | null][]): RegionNode {
   const tree = createSite(2000);
   tree.children = strips.map(([a, b, type], i) => ({
     id: `site/${type ? 'd' : 'w'}:${i}`, name: String(i), kind: type ? 'district' : 'river', stage: 'test',
-    geometry: makeSlab([[[[a, -1000], [b, -1000], [b, 1000], [a, 1000]]]]), attrs: type ? { type } : {}, children: [],
+    geometry: makeSlab([[[[a, -1000], [b, -1000], [b, 1000], [a, 1000]]]]), attrs: type ? { type } : {} as Record<string, string>, children: [],
   }));
   return tree;
 }
