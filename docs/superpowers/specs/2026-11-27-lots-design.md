@@ -64,7 +64,7 @@ call, for the owner's eyes):
 
 | zones | at step 9 | Suburban High (4) | Suburban Low (2) | note |
 |---|---|---|---|---|
-| LR | 12 × 24 m | 18 × 37 | 22 × 44 | single-family |
+| LR | 12 × 24 m (now 14.4 × 24) | 18 × 37 | 22 × 44 | single-family |
 | LC, LO | 20 × 30 m | 31 × 46 | 37 × 55 | ample parking |
 | HR, HC, HO, HCR, HCO | 10 × 25 m (was 7 × 20: the owner found them too small) | (Town, steps 4–6: 13–15 × 33–39) | | townhouses, shopfronts |
 | MR, MCR | 25 × 30 m | (Low urban, 5–7: 29–35 × 35–42) | | apartment blocks |
@@ -181,3 +181,9 @@ skinny: cuts were accepted down to half a frontage, and runs were split into the
 of frontages). A run is cut into as many whole frontages as fit, so lots are 1–2 frontages wide,
 and cut points are placed by length along the run (a sample's middle was up to half a sample off).
 Lots 24,029 / 22,120 / 30,070; saved 11.5 / 10.4 / 14.3 MB.
+
+**2026-11-27, later still:** "far too many buildings facing a road". **No lot is more than 2.5
+times deeper than its frontage** (`ASPECT`, `cut.ts`): a lot's least frontage is the larger of the
+target and its depth (area over frontage) ÷ 2.5, so lots stretched back get wider. And, "a tiny bit"
+on top, every non-big zone's frontage × 1.2 (LR 14.4, LC/LO 24, H 12, MR/MCR 30, UR/UCR 36 m at
+step 9). Lots 17,158 / 15,771 / 21,565; saved 8.8 / 7.9 / 10.9 MB; lots stage 2.4–3.1 s.

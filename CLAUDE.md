@@ -312,7 +312,8 @@ Lot sectioning comes next.
     depths and each row fronts along half the spine at least (repeated spines made strips fronting
     only on the block's ends); then cuts square to the frontage road at whole numbers of
     frontages. **The target frontage is a minimum** (the owner: lots were far too skinny): lots
-    stretch to 1–2 frontages rather than narrow. Every cut leaves each piece on an allowed road, a minimum lot, and squareness as
+    stretch to 1–2 frontages rather than narrow, and none is more than 2.5 times deeper than its
+    frontage (`ASPECT`: deep lots get wider). Every cut leaves each piece on an allowed road, a minimum lot, and squareness as
     blocks. Cuts are straight, a hair-thin kerf merged into one side (exact partition). **Open
     ground** is the land more than twice the lot depth from an allowed road (the owner chose this
     over rear lots with access strips); measured from every edge, far sides on roads the zone
@@ -321,7 +322,7 @@ Lot sectioning comes next.
   - `faces.ts`: `edges`, one character per outline edge (`A` `C` `L`, `-` another lot, `o` open
     land), for buildings to read; `front`, the allowed category the lot runs along furthest,
     sampled along the whole outline.
-  - Site data `lotStats`. About 30–40k lots in a 10 km city and 13–19 MB saved: the owner's call
+  - Site data `lotStats`. About 16–22k lots in a 10 km city and 8–11 MB saved: the owner's call
     to store them resolved for now ("a question for future us").
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),

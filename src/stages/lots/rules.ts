@@ -11,13 +11,14 @@ type Size = { frontage: number; depth: number };
 
 export const BIG_LOT = new Set<Zone>(['MC', 'MO', 'UO', 'UCO', 'UCOR']);
 
-// At step 9. Big lots: the blocks stage's densest default block (another stage's settings aren't
+// At step 9; frontages × 1.2 on the first values (the owner, 2026-11-27: "a tiny bit" wider, on
+// top of the depth-to-frontage cap in cut.ts). Big lots: the blocks stage's densest default block (another stage's settings aren't
 // visible here).
 const AT_9: Record<Zone, Size> = {
-  LR: { frontage: 12, depth: 24 }, LC: { frontage: 20, depth: 30 }, LO: { frontage: 20, depth: 30 },
-  HR: { frontage: 10, depth: 25 }, HC: { frontage: 10, depth: 25 }, HO: { frontage: 10, depth: 25 }, HCR: { frontage: 10, depth: 25 }, HCO: { frontage: 10, depth: 25 },
-  MR: { frontage: 25, depth: 30 }, MCR: { frontage: 25, depth: 30 },
-  UR: { frontage: 30, depth: 30 }, UCR: { frontage: 30, depth: 30 },
+  LR: { frontage: 14.4, depth: 24 }, LC: { frontage: 24, depth: 30 }, LO: { frontage: 24, depth: 30 },
+  HR: { frontage: 12, depth: 25 }, HC: { frontage: 12, depth: 25 }, HO: { frontage: 12, depth: 25 }, HCR: { frontage: 12, depth: 25 }, HCO: { frontage: 12, depth: 25 },
+  MR: { frontage: 30, depth: 30 }, MCR: { frontage: 30, depth: 30 },
+  UR: { frontage: 36, depth: 30 }, UCR: { frontage: 36, depth: 30 },
   MC: { frontage: 160, depth: 70 }, MO: { frontage: 160, depth: 70 }, UO: { frontage: 160, depth: 70 }, UCO: { frontage: 160, depth: 70 }, UCOR: { frontage: 160, depth: 70 },
 };
 // The least a block must hold of a big-lot zone: an urban-core lot, not a whole block.
