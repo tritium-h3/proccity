@@ -134,7 +134,8 @@ won't carry comfortably. Options:
 3. **Store per block only how it was cut** (cut lines), and resolve lots on load: small, but breaks
    the resolved-geometry rule.
 
-Recommendation: 1 now, measured; revisit with 2 if 10 km saves feel slow.
+**Decided (owner, 2026-11-27): 1 for now.** "Save size is very big! I feel like we could do more
+for less, but maybe that's a question for future us." Parked, not solved.
 
 ## Left to the builder
 
