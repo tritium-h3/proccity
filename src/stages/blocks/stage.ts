@@ -11,7 +11,8 @@ import { makeSlab } from '../../grammar/slab.js';
 import { TYPE_LABEL, type DistrictType } from '../districts/rules.js';
 import { createRng } from '../../pipeline/seeds.js';
 import type { Stage } from '../types.js';
-import { divideSuperblock, HARD_GRADE, type BlockSettings, type DivideCtx, type Street } from './divide.js';
+import { divideAll, HARD_GRADE, type BlockSettings, type DivideCtx, type Item, type Street } from './divide.js';
+import { Junctions } from './junctions.js';
 import { classifyBoundary, runsOf } from './edges.js';
 import { makeField } from './field.js';
 import { heightRaster } from './height.js';
@@ -150,20 +151,31 @@ export const blocks: Stage = {
       borders.set(sb.id, { lines, strips, edges, edgeStrips, pieces, open });
     }
 
-    // 2. Divide each superblock.
+    // 2. Divide every sub-district in one queue, each piece by its own sub-district's context, so
+    //    streets can carry on from one into the next.
+    const junctions = new Junctions();
+    const fields = new Map<string, ReturnType<typeof makeField>>();
+    const items: Item[] = [];
     for (const sb of superblocks) {
-      const type = attr(sb, 'type') as Developed;
+      const type = attr(sb, 'type') as Developed, family = familyOf(type);
       const step = Number(sb.attrs.step);
+      if (!fields.has(family)) fields.set(family, makeField(height, family, s.localGrade / 100, (HARD_GRADE * s.localGrade) / 100));
       // Interim: the smallest lot grows as the step falls (the lots stage will own lot size).
       const lot = smallestLot(type), f = lotFactor(step);
+      const open = borders.get(sb.id)!.open;
       const ctx: DivideCtx = {
-        family: familyOf(type), step, s, minBlockArea: lot.area * f * f, minDepth: lot.depth * f, rng, roads,
-        field: makeField(height, familyOf(type), s.localGrade / 100, (HARD_GRADE * s.localGrade) / 100), height,
-        openAt: p => !!borders.get(sb.id)!.open.at(p),
+        family, step, s, minBlockArea: lot.area * f * f, minDepth: lot.depth * f, rng, roads, junctions,
+        field: fields.get(family), height, openAt: p => !!open.at(p),
       };
+      for (const piece of borders.get(sb.id)!.pieces) items.push({ owner: sb.id, piece, ctx });
+    }
+    const divided = divideAll(items);
+    for (const [k, v] of Object.entries(divided.stats)) stats[k] = (stats[k] ?? 0) + v;
+
+    for (const sb of superblocks) {
+      const type = attr(sb, 'type') as Developed;
       const border = borders.get(sb.id)!;
-      const out = divideSuperblock(border.pieces, ctx);
-      for (const [k, v] of Object.entries(out.stats)) stats[k] = (stats[k] ?? 0) + v;
+      const out = divided.byOwner.get(sb.id) ?? { streets: [], strips: [], blocks: [] };
       stats.subdistricts++;
       // A superblock no cut fits is still a block (one child), so it gets a zone like any other.
       const kids: RegionNode[] = [];

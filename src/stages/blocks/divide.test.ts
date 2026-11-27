@@ -3,7 +3,10 @@ import type { Point2 } from '../../doc/types.js';
 import { rect } from '../../grammar/polygon.js';
 import { createRng } from '../../pipeline/seeds.js';
 import { defaultsFor } from '../settings.js';
-import { divideSuperblock, type BlockSettings, type DivideCtx } from './divide.js';
+import { divideAll, divideSuperblock, type BlockSettings, type DivideCtx } from './divide.js';
+import { Junctions } from './junctions.js';
+import { checkPartition } from '../../grammar/partition.js';
+import { makeSlab } from '../../grammar/slab.js';
 import { RoadIndex } from './roads.js';
 import { blocks } from './stage.js';
 
@@ -14,7 +17,7 @@ function ringed(w: number, h: number): DivideCtx {
   const roads = new RoadIndex();
   const ring: Point2[] = [[-12.5, -12.5], [w + 12.5, -12.5], [w + 12.5, h + 12.5], [-12.5, h + 12.5], [-12.5, -12.5]];
   roads.add({ points: ring, category: 'A', half: 12.5 });
-  return { family: 'dense', step: 9, s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, openAt: () => false };
+  return { family: 'dense', step: 9, s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, junctions: new Junctions(), openAt: () => false };
 }
 
 describe('dividing a superblock', () => {
@@ -44,10 +47,30 @@ describe('dividing a superblock', () => {
   it('cuts a piece with a road on one side only square off that side', () => {
     const roads = new RoadIndex();
     roads.add({ points: [[-100, -12.5], [1100, -12.5]], category: 'A', half: 12.5 });
-    const ctx: DivideCtx = { family: 'dense', step: 9, s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, openAt: () => true };
+    const ctx: DivideCtx = { family: 'dense', step: 9, s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, junctions: new Junctions(), openAt: () => true };
     const out = divideSuperblock([rect(0, 0, 1000, 300)], ctx);
     expect(out.streets.length).toBeGreaterThan(0);
     // Every street meets a road at one end at least.
     for (const st of out.streets) expect([st.points[0], st.points[st.points.length - 1]].some(e => ctx.roads.at(e)), JSON.stringify(st.points.slice(0, 2))).toBe(true);
+  });
+});
+
+describe('dividing the site in one queue', () => {
+  // Two pieces side by side, arterials all round, a 12 m local road between them.
+  function pair(step = 9) {
+    const ctx = ringed(1212, 600);
+    ctx.step = step;
+    ctx.roads.add({ points: [[606, -20], [606, 620]], category: 'L', half: 6 });
+    return { ctx, left: rect(0, 0, 600, 600), right: rect(612, 0, 1212, 600) };
+  }
+  it('divides every owner’s pieces, each partitioned', () => {
+    const { ctx, left, right } = pair();
+    const out = divideAll([{ owner: 'a', piece: left, ctx }, { owner: 'b', piece: right, ctx }]);
+    for (const [owner, piece] of [['a', left], ['b', right]] as const) {
+      const o = out.byOwner.get(owner)!;
+      expect(o.blocks.length, owner).toBeGreaterThan(1);
+      const check = checkPartition(makeSlab(piece), [...o.strips, ...o.blocks].map(fp => makeSlab(fp)), 1e-4);
+      expect(check.problems, owner).toEqual([]);
+    }
   });
 });
