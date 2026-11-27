@@ -373,7 +373,9 @@ interface Override {
   Selecting a generated stage shows its settings without discarding anything, and
   changing one regenerates from there through `generatedThrough`. "Next ▸" generates the
   following stage. **"Clear after this"** on a stage discards every later stage
-  (`generatedThrough` = that stage). That's what "step back" means in History. (My call.)
+  (`generatedThrough` = that stage) and, since 2026-11-27, their overrides (the owner: pins
+  survive rerolling or changing a stage, not clearing what came after it). That's what "step
+  back" means in History. (My call.)
 - **Centre:** the 3D view. Click picks the region under the cursor at the current stage
   (raycast → node id) and highlights it. Hover shows a light highlight.
 - **Right:** the inspector for the picked region: breadcrumb path (each segment
