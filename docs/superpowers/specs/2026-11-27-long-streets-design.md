@@ -182,3 +182,4 @@ the most crowded block 80 → 48 lots, local ends on arterials 41 → 53 (seed 1
 A threshold of 1.5 lengths fixed six but nearly doubled the arterial junctions. The rest are steep
 strips along a 37% hillside (straight cross streets would climb 36–37%, past the 30% ceiling;
 diagonals fail the 50° junction angle), shape refusals, and Rural pieces within their slack.
+The owner (2026-11-27): leave the steep strips and the odd-shaped refusals as they are.
