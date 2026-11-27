@@ -104,8 +104,9 @@ is the dense one):
   Undeveloped sub-districts are named "Undeveloped".
 - Letters and words were proposed by Claude; the owner set the pattern (Financial High, F9).
 
-Ranges overlap where types may border (the districts neighbour table), so crossing a border
-can cost one step or none. The table lives in the stage's `rules.ts` as the source of truth;
+Types next in rank overlap or touch, so crossing such a border costs one step or none. (Not
+every pair the districts' neighbour table allows: Rural may border Town core or Town business,
+3–4 steps apart. The owner's table, so left as is.) The table lives in the stage's `rules.ts` as the source of truth;
 the step numbers are a starting point for the owner's eyes.
 
 ### The implied density field
@@ -208,3 +209,30 @@ stage id; a tree with blocks but no sub-districts regenerates from sub-districts
 
 - The ladder steps, `open[type]` and the sparsest spacing numbers.
 - Whether water should count as low density.
+
+## As built (2026-11-27)
+
+- **Steps are centred on each district.** A piece's step is
+  `nominal(type) + 1.5 × (its field − its district's mean field)`, rounded into the type's range.
+  On the raw field the densest type never reached its top level (its neighbours are always
+  sparser, so its pieces all rounded down: no F9 anywhere, Town core always T4). Centring keeps
+  the side towards a denser neighbour denser and lets every level appear. The chance of open land
+  still uses the raw field. Gain 1.5 measured: every level shows, middle levels stay common.
+- The blur's scale comes from the districts' mean area (another stage's settings aren't visible
+  to a stage); equal to the District size setting at the defaults.
+- Saved cities from before the stage load **stepped back to arterials** (their blocks divided
+  superblocks); Next builds sub-districts, then blocks. `editor/normalize.ts`.
+- Shared border streets now keep the road id they were first recorded under on both sides.
+
+Numbers at 10 km, seeds 1–3:
+
+| | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| sub-districts | 55 | 51 | 54 |
+| Undeveloped (count, ha) | 10, 940 | 7, 1,088 | 7, 437 |
+| open picks refused | 0 | 0 | 0 |
+| blocks (before: ~2,500–3,900) | 1,857 | 1,465 | 2,193 |
+| edge collectors | 5 | 3 | 1 |
+| roadless | 0 | 0 | 0 |
+
+The stage takes about 120 ms; blocks 1.5–2.2 s.
