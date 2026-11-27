@@ -15,7 +15,7 @@ export const BIG_LOT = new Set<Zone>(['MC', 'MO', 'UO', 'UCO', 'UCOR']);
 // visible here).
 const AT_9: Record<Zone, Size> = {
   LR: { frontage: 12, depth: 24 }, LC: { frontage: 20, depth: 30 }, LO: { frontage: 20, depth: 30 },
-  HR: { frontage: 7, depth: 20 }, HC: { frontage: 7, depth: 20 }, HO: { frontage: 7, depth: 20 }, HCR: { frontage: 7, depth: 20 }, HCO: { frontage: 7, depth: 20 },
+  HR: { frontage: 10, depth: 25 }, HC: { frontage: 10, depth: 25 }, HO: { frontage: 10, depth: 25 }, HCR: { frontage: 10, depth: 25 }, HCO: { frontage: 10, depth: 25 },
   MR: { frontage: 25, depth: 30 }, MCR: { frontage: 25, depth: 30 },
   UR: { frontage: 30, depth: 30 }, UCR: { frontage: 30, depth: 30 },
   MC: { frontage: 160, depth: 70 }, MO: { frontage: 160, depth: 70 }, UO: { frontage: 160, depth: 70 }, UCO: { frontage: 160, depth: 70 }, UCOR: { frontage: 160, depth: 70 },
