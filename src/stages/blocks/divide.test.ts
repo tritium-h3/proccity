@@ -57,12 +57,13 @@ describe('dividing a superblock', () => {
 
 describe('dividing the site in one queue', () => {
   // Two pieces side by side, arterials all round, a 12 m local road between them.
-  function pair(step = 9) {
-    const ctx = ringed(1212, 600);
-    ctx.step = step;
-    ctx.roads.add({ points: [[606, -20], [606, 620]], category: 'L', half: 6 });
-    return { ctx, left: rect(0, 0, 600, 600), right: rect(612, 0, 1212, 600) };
+  function pair(between: 'L' | 'A' = 'L', rightWidth = 600) {
+    const ctx = ringed(612 + rightWidth, 600);
+    ctx.roads.add({ points: [[606, -20], [606, 620]], category: between, half: 6 });
+    return { ctx, left: rect(0, 0, 600, 600), right: rect(612, 0, 612 + rightWidth, 600) };
   }
+  const routesIn = (out: ReturnType<typeof divideAll>, owner: string, cat?: string) =>
+    new Set(out.byOwner.get(owner)!.streets.filter(st => !cat || st.category === cat).map(st => st.route));
   it('divides every owner’s pieces, each partitioned', () => {
     const { ctx, left, right } = pair();
     const out = divideAll([{ owner: 'a', piece: left, ctx }, { owner: 'b', piece: right, ctx }]);
@@ -72,5 +73,46 @@ describe('dividing the site in one queue', () => {
       const check = checkPartition(makeSlab(piece), [...o.strips, ...o.blocks].map(fp => makeSlab(fp)), 1e-4);
       expect(check.problems, owner).toEqual([]);
     }
+  });
+  it('carries a street on across a local road, in line', () => {
+    const { ctx, left, right } = pair();
+    const out = divideAll([{ owner: 'a', piece: left, ctx }, { owner: 'b', piece: right, ctx }]);
+    const a = out.byOwner.get('a')!.streets, b = out.byOwner.get('b')!.streets;
+    const shared = a.filter(st => b.some(o => o.route === st.route));
+    expect(shared.length).toBeGreaterThan(0);
+    // Facing ends across the road line up.
+    for (const st of shared) {
+      const o = b.find(x => x.route === st.route)!;
+      const ea = [st.points[0], st.points[st.points.length - 1]].reduce((m, p) => (p[0] > m[0] ? p : m));
+      const eb = [o.points[0], o.points[o.points.length - 1]].reduce((m, p) => (p[0] < m[0] ? p : m));
+      expect(Math.abs(ea[1] - eb[1]), JSON.stringify([ea, eb])).toBeLessThan(7);
+    }
+    expect(out.stats.continued).toBeGreaterThan(0);
+  });
+  it('stops a local road at an arterial', () => {
+    const { ctx, left, right } = pair('A');
+    const out = divideAll([{ owner: 'a', piece: left, ctx }, { owner: 'b', piece: right, ctx }]);
+    const a = routesIn(out, 'a', 'L'), b = routesIn(out, 'b', 'L');
+    expect([...a].filter(r => b.has(r))).toEqual([]);
+  });
+  it('doesn’t cut a piece already small enough to be a block', () => {
+    const { ctx, left } = pair('L', 40);
+    const right = rect(612, 0, 652, 60);
+    const out = divideAll([{ owner: 'a', piece: left, ctx }, { owner: 'b', piece: right, ctx }]);
+    expect(out.byOwner.get('b')!.streets).toEqual([]);
+    expect(out.byOwner.get('b')!.blocks).toHaveLength(1);
+  });
+  it('lines up local roads’ junctions rather than staggering them', () => {
+    // On the arterial ring close junctions can't be helped (every edge local must end on it);
+    // on local roads, a near miss is a brick.
+    const out = divideAll([{ owner: '', piece: rect(0, 0, 1000, 600), ctx: ringed(1000, 600) }]);
+    expect(out.stats.closeL ?? 0).toBe(0);
+    expect(out.stats.continued).toBeGreaterThan(10);
+  });
+  it('keeps local roads off arterials where the piece can be cut otherwise', () => {
+    const out = divideAll([{ owner: '', piece: rect(0, 0, 1600, 1000), ctx: ringed(1600, 1000) }]);
+    const locals = out.byOwner.get('')!.streets.filter(st => st.category === 'L').length;
+    expect(locals).toBeGreaterThan(20);
+    expect(out.stats.localOnArterial).toBeLessThan(0.15 * locals);
   });
 });

@@ -3,7 +3,7 @@
 // then). Pure; cuts are traced along `ctx.field` where there is one, straight otherwise.
 
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
-import { area, simplifyLine } from '../../grammar/polygon.js';
+import { area, bounds, containsPoint, simplifyLine } from '../../grammar/polygon.js';
 import { offsetPolygons, offsetPolyline, union } from '../../grammar/clipper.js';
 import { chordsAlong, chordThrough, extend, outlineSamples, sideOf, obb, offsetPath, splitBand, walkToRoad, type Box } from './geometry.js';
 import type { Field } from './field.js';
@@ -19,7 +19,11 @@ export interface BlockSettings extends SpacingSettings {
   localGrade: number;
 }
 
-export interface Street { points: Point2[]; category: 'C' | 'L'; width: number }
+export interface Street {
+  points: Point2[]; category: 'C' | 'L'; width: number;
+  /** segments of one street carried on across roads share this (an id local to the division) */
+  route?: string;
+}
 
 
 export interface DivideCtx {
@@ -114,6 +118,13 @@ const OFFSETS = [0, 0.1, -0.1, 0.2, -0.2];
 const EDGE_RUN = 2;
 // An end on open land, in metres of edge run: a road-to-road cut nearby is preferred.
 const OPEN_COST = 100;
+// A continuation across a road: its near end within half the road's width (plus this) of where the
+// street it carries on would come out, and turning less than MAX_TURN_ACROSS.
+const ALIGN = 1; // m
+// A local road may end on an arterial only in a piece over this many target blocks (measured: 2
+// keeps 40–70 such ends a 10 km city, down from 130–200, without bigger blocks).
+const ARTERIAL_FALLBACK = 2;
+const MAX_TURN_ACROSS = Math.PI / 6;
 
 interface Plan { origin: Point2; across: number }
 
@@ -151,13 +162,16 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): Divide
  *  family, field, lot size), so a street can carry on from one sub-district into the next. */
 export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats: Record<string, number> } {
   const byOwner = new Map<string, Divided>();
-  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, collectorsSkipped: 0, rejectedCheck: 0, rejectedThin: 0, rejectedSquare: 0, rejectedAngle: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0, junctionsClose: 0 };
+  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, collectorsSkipped: 0, rejectedCheck: 0, rejectedThin: 0, rejectedSquare: 0, rejectedAngle: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0, junctionsClose: 0, continued: 0, localOnArterial: 0 };
+  let routes = 0;
   const outOf = (owner: string) => {
     let o = byOwner.get(owner);
     if (!o) byOwner.set(owner, (o = { streets: [], strips: [], blocks: [] }));
     return o;
   };
-  const queue = items.map(it => ({ ...it, a: area(it.piece) }));
+  type Queued = Item & { a: number; b: ReturnType<typeof bounds> };
+  const enqueue = (it: Item): Queued => ({ ...it, a: area(it.piece), b: bounds(it.piece) });
+  const queue: Queued[] = items.map(enqueue);
   while (queue.length) {
     queue.sort((x, y) => y.a - x.a);
     const it = queue.shift()!;
@@ -175,8 +189,13 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
       if (b) { commit(it, b, 'C'); return true; }
       stats.collectorsSkipped++;
     }
-    const b = best(it.piece, 'L', candidates(it.piece, box, it.ctx, t), it.ctx);
-    if (b) commit(it, b, 'L');
+    // Local roads keep off arterials (their junctions stay rare) unless the piece can be cut no
+    // other way and is big (over ARTERIAL_FALLBACK target blocks): the owner's notes disfavour a
+    // local road meeting an arterial, but allow it. Allowed whenever no other cut fitted, it put
+    // 130–200 local ends a city back on the arterials; never, it left Rural blocks too big.
+    const b = best(it.piece, 'L', candidates(it.piece, box, it.ctx, t), it.ctx, false)
+      ?? (area(it.piece) > ARTERIAL_FALLBACK * t.depth * t.length ? best(it.piece, 'L', candidates(it.piece, box, it.ctx, t), it.ctx, true) : null);
+    if (b) { if (b.line.some((_, i, l) => (i === 0 || i === l.length - 1) && it.ctx.roads.at(l[i])?.category === 'A')) stats.localOnArterial++; commit(it, b, 'L'); }
     return !!b;
   }
 
@@ -185,7 +204,7 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
    *  other roadless edge turns and follows it inside the piece to the nearest road. A cut from
    *  road to road wins outright; otherwise the cheapest, an open end counting as `OPEN_COST`
    *  metres of edge run, a junction too close to another on the same road its `junctionCost`. */
-  function best(piece: MultiPolygon, category: 'C' | 'L', cands: Iterable<Point2[]>, ctx: DivideCtx): Best | null {
+  function best(piece: MultiPolygon, category: 'C' | 'L', cands: Iterable<Point2[]>, ctx: DivideCtx, onArterial = true): Best | null {
     const t = targets(ctx);
     const w = category === 'C' ? ctx.s.collectorWidth : ctx.s.localWidth, maxRun = EDGE_RUN * t.length;
     const minSide = category === 'C' ? 2 * t.depth + ctx.s.localWidth : 0;
@@ -199,9 +218,8 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
       // them an A or C. Locals may meet arterials, but the arterial's junction spacing disfavours it.
       const cats = ends.map(e => ctx.roads.at(e)?.category);
       if (category === 'C' && (!onRoad.every(o => o) || !cats.some(c => c === 'A' || c === 'C'))) { stats.rejectedEnds++; continue; }
-      const junctionEnds = ends.map((e, i) => (onRoad[i] ? e : walks[i]?.path[walks[i]!.path.length - 1] ?? null));
-      const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0) + open.filter(o => o).length * OPEN_COST
-        + junctionEnds.reduce((m, e) => m + (e ? junctionCost(ctx.roads, ctx.junctions, e, t) : 0), 0);
+      if (!onArterial && cats.some(c => c === 'A') && category === 'L') { stats.rejectedEnds++; continue; }
+      const run = walks.reduce((m, wk) => m + (wk?.length ?? 0), 0) + open.filter(o => o).length * OPEN_COST;
       if (top && run >= top.run) continue;
       // A traced cut meeting its road at a slant gets a short square stub there instead, unless
       // the stub itself is too steep (on very steep ground it points straight up the slope).
@@ -242,7 +260,9 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
     return top;
   }
 
-  function commit(it: Item, b: Best, category: 'C' | 'L'): void {
+  /** Make the cut, then carry the street on across the roads its ends meet (all but `from`, the
+   *  end it arrived by). */
+  function commit(it: Item, b: Best, category: 'C' | 'L', route = `r${routes++}`, from = -1): void {
     const { ctx } = it, t = targets(ctx), o = outOf(it.owner);
     const { line, walks, split } = b;
     const w = category === 'C' ? ctx.s.collectorWidth : ctx.s.localWidth;
@@ -253,19 +273,69 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
       const at = ctx.roads.at(e) ? e : walks[i]?.path[walks[i]!.path.length - 1];
       const host = at && ctx.roads.at(at);
       if (!at || !host) return;
-      if (junctionCost(ctx.roads, ctx.junctions, at, t) > 0) stats.junctionsClose++;
+      if (junctionCost(ctx.roads, ctx.junctions, at, t) > 0) { stats.junctionsClose++; stats[`close${host.category}`] = (stats[`close${host.category}`] ?? 0) + 1; }
       ctx.junctions.add(host, at);
     });
     // The centreline: the cut, then each edge run half a width inside the outline.
     const offs = walks.map(wk => (wk ? offsetPath(wk.path, (wk.side * w) / 2) : null));
     const points: Point2[] = [...(offs[0] ? [...offs[0]].reverse() : [line[0]]), ...line.slice(1, -1), ...(offs[1] ?? [line[line.length - 1]])];
-    o.streets.push({ points, category, width: w });
+    o.streets.push({ points, category, width: w, route });
     o.strips.push(split[0]);
     ctx.roads.add({ points: line, category, half: w / 2 });
     for (const wk of walks) if (wk) { ctx.roads.add({ points: wk.path, category, half: w }); stats.edgeRuns++; stats.edgeRunM += Math.round(wk.length); }
-    queue.push({ owner: it.owner, piece: split[1], ctx, a: area(split[1]) }, { owner: it.owner, piece: split[2], ctx, a: area(split[2]) });
+    queue.push(enqueue({ owner: it.owner, piece: split[1], ctx }), enqueue({ owner: it.owner, piece: split[2], ctx }));
+    ends.forEach((e, i) => {
+      if (i === from) return;
+      const prev = i === 0 ? line[1] : line[line.length - 2];
+      const L = Math.hypot(e[0] - prev[0], e[1] - prev[1]) || 1;
+      carryOn(ctx.roads, e, [(e[0] - prev[0]) / L, (e[1] - prev[1]) / L], category, route);
+    });
+  }
+
+  /** Carry a street on across the road it meets at `e`, heading `dir`, into the piece beyond, if
+   *  that piece's own rules accept it there. Across collectors and local roads; across an arterial
+   *  only as a collector (the arterial's junctions stay rare). */
+  function carryOn(roads: RoadIndex, e: Point2, dir: Point2, category: 'C' | 'L', route: string): void {
+    const host = roads.at(e);
+    if (!host || (host.category === 'A' && category !== 'C')) return;
+    const across = 2 * host.half;
+    const out: Point2 = [e[0] + dir[0] * across, e[1] + dir[1] * across];
+    const seed: Point2 = [out[0] + dir[0] * ALIGN, out[1] + dir[1] * ALIGN];
+    const k = queue.findIndex(q => seed[0] >= q.b.minX && seed[0] <= q.b.maxX && seed[1] >= q.b.minZ && seed[1] <= q.b.maxZ && containsPoint(q.piece, seed));
+    if (k < 0) return; // a finished block, open land, or nothing
+    const q = queue[k], t = targets(q.ctx), box = obb(q.piece);
+    if (!plans(box, t).length) return; // already block-sized
+    const heading = Math.atan2(dir[1], dir[0]);
+    const aligned = (line: Point2[] | null): Point2[] | null => {
+      if (!line || line.length < 2) return null;
+      const l = Math.hypot(line[0][0] - out[0], line[0][1] - out[1]) <= Math.hypot(line[line.length - 1][0] - out[0], line[line.length - 1][1] - out[1]) ? line : [...line].reverse();
+      if (Math.hypot(l[0][0] - out[0], l[0][1] - out[1]) > host.half + ALIGN) return null;
+      const d0 = Math.atan2(l[1][1] - l[0][1], l[1][0] - l[0][0]);
+      return Math.abs(lineDiffAngle(d0, heading)) < MAX_TURN_ACROSS ? l : null;
+    };
+    function* cands(): Generator<Point2[]> {
+      if (q.ctx.field) {
+        const traced = traceCut(q.piece, q.ctx.field, seed, heading, TRACE_STEP, 3 * box.long);
+        const l = aligned(traced && simplifyLine(traced, 1));
+        if (l) yield l;
+      }
+      const c = aligned(chordThrough(q.piece, seed, dir));
+      if (c) yield c;
+    }
+    for (const cat of category === 'C' && box.long > t.collectors ? (['C', 'L'] as const) : (['L'] as const)) {
+      const b = best(q.piece, cat, cands(), q.ctx, false);
+      if (!b) continue;
+      queue.splice(k, 1);
+      stats.continued++;
+      const near = Math.hypot(b.line[0][0] - out[0], b.line[0][1] - out[1]) <= Math.hypot(b.line[b.line.length - 1][0] - out[0], b.line[b.line.length - 1][1] - out[1]) ? 0 : 1;
+      commit(q, b, cat, route, near);
+      return;
+    }
   }
 }
+
+/** Signed difference between two headings, in (−π, π]. */
+const lineDiffAngle = (a: number, b: number) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
 /** The cut lines to try, best first: each planned line (every stretch of it across the piece, as
  *  an odd-shaped piece can have several), then lines square off the piece's road edges, nearest

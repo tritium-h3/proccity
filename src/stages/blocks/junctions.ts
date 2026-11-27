@@ -1,8 +1,10 @@
 // Junction spacing, the principle behind the road hierarchy (the owner, 2026-11-27): the bigger
 // the road, the wider the spacing of the junctions along it. Arterials are met rarely, collectors
-// about once a block length, local roads may branch freely. A new junction too close to an
-// existing one on the same road costs; landing on one (a crossing) costs nothing, which is what
-// turns staggered T-junctions (bricks) into crossroads.
+// about once a block length, local roads may branch freely. Measured here (the stats count
+// junctions closer than the spacing, by category); not scored. As a score it was tried and dropped
+// (2026-11-27): it added 8% more blocks and left arterial junctions as close as before. What does
+// the job is structural: streets carry on across roads (crossroads, not bricks), and local roads
+// keep off arterials unless a piece can be cut no other way (divide.ts).
 
 import type { Point2 } from '../../doc/types.js';
 import type { RoadIndex, RoadLine } from './roads.js';
