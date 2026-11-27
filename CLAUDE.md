@@ -272,7 +272,10 @@ Lots come next.
     by that piece's own rules, in line (within half the road's width, turning under 30°), and so
     on until a piece refuses; across arterials only as a collector, and never into a piece already
     block-sized. Segments of one street share a `route` (in `data.streets`, the first segment's
-    id): the seam for street names. **Local roads keep off arterials** unless the piece can be cut
+    id): the seam for street names. **Crossroad favouritism** (`withCrossroads`, `snapEnds`): a
+    candidate whose end meets a road within half a block depth of a street ending across it is
+    tried first moved to line up, whatever either road's category; a whole depth was measured
+    worse. **Local roads keep off arterials** unless the piece can be cut
     no other way and is over two target blocks (`ARTERIAL_FALLBACK`; the owner's notes disfavour
     but allow it). Block depth, length and
     collector spacing come from the step, geometric between the Densest (step 9) and Sparsest

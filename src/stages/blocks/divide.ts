@@ -9,7 +9,7 @@ import { chordsAlong, chordThrough, extend, outlineSamples, sideOf, obb, offsetP
 import type { Field } from './field.js';
 import type { HeightRaster } from './height.js';
 import type { RoadIndex } from './roads.js';
-import { junctionCost, type Junctions } from './junctions.js';
+import { junctionCost, snapEnds, type Junctions } from './junctions.js';
 import { traceCut } from './trace.js';
 import { spacing, type SpacingSettings } from '../subdistricts/rules.js';
 import type { Family } from './rules.js';
@@ -150,7 +150,20 @@ export function plans(box: Box, t: { depth: number; length: number }): Plan[] {
 
 export interface Item { owner: string; piece: MultiPolygon; ctx: DivideCtx }
 export interface Divided { streets: Street[]; strips: MultiPolygon[]; blocks: MultiPolygon[] }
-interface Best { run: number; line: Point2[]; walks: (ReturnType<typeof walkToRoad>)[]; split: [MultiPolygon, MultiPolygon, MultiPolygon] }
+interface Best { run: number; line: Point2[]; walks: (ReturnType<typeof walkToRoad>)[]; split: [MultiPolygon, MultiPolygon, MultiPolygon]; snapped: boolean }
+
+// Lines moved to line up with a street across the road (`snapEnds`), to count them.
+const snappedLines = new WeakSet<Point2[]>();
+/** Each candidate, preceded by its variant moved to line up with a street ending across the road
+ *  within half a block depth: tried first, it wins whenever the piece's rules accept it (most cuts
+ *  cost nothing), so jogs become crossroads without a score. */
+function* withCrossroads(cands: Iterable<Point2[]>, ctx: DivideCtx, t: { depth: number }): Generator<Point2[]> {
+  for (const line of cands) {
+    const moved = snapEnds(line, ctx.roads, ctx.junctions, t.depth / 2);
+    if (moved) { snappedLines.add(moved); yield moved; }
+    yield line;
+  }
+}
 
 /** Divide the pieces of one superblock (what's left after its border streets). */
 export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): Divided & { stats: Record<string, number> } {
@@ -162,7 +175,7 @@ export function divideSuperblock(pieces: MultiPolygon[], ctx: DivideCtx): Divide
  *  family, field, lot size), so a street can carry on from one sub-district into the next. */
 export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats: Record<string, number> } {
   const byOwner = new Map<string, Divided>();
-  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, collectorsSkipped: 0, rejectedCheck: 0, rejectedThin: 0, rejectedSquare: 0, rejectedAngle: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0, junctionsClose: 0, continued: 0, localOnArterial: 0 };
+  const stats: Record<string, number> = { rejectedEnds: 0, rejectedSplit: 0, rejectedSize: 0, collectorsSkipped: 0, rejectedCheck: 0, rejectedThin: 0, rejectedSquare: 0, rejectedAngle: 0, edgeRuns: 0, edgeRunM: 0, openEnds: 0, junctionsClose: 0, continued: 0, localOnArterial: 0, crossroads: 0 };
   let routes = 0;
   const outOf = (owner: string) => {
     let o = byOwner.get(owner);
@@ -209,7 +222,8 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
     const w = category === 'C' ? ctx.s.collectorWidth : ctx.s.localWidth, maxRun = EDGE_RUN * t.length;
     const minSide = category === 'C' ? 2 * t.depth + ctx.s.localWidth : 0;
     let top: Best | null = null;
-    for (let line of cands) {
+    for (let line of withCrossroads(cands, ctx, t)) {
+      const lineIn = line;
       const ends = [line[0], line[line.length - 1]];
       const onRoad = ends.map(e => !!ctx.roads.at(e)), open = ends.map((e, i) => !onRoad[i] && ctx.openAt(e));
       const walks = ends.map((e, i) => (onRoad[i] || open[i] ? null : walkToRoad(piece, e, q => !!ctx.roads.at(q), maxRun)));
@@ -254,7 +268,7 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
       // worse than the piece it came from (superblocks can be odd shapes to begin with).
       const need = Math.min(SQUARE, SQUARE_KEEP * fill(piece));
       if (![split[1], split[2]].every(side => plans(obb(side), t).length > 0 || fill(side) >= need)) { stats.rejectedSquare++; continue; }
-      top = { run: cost, line, walks, split };
+      top = { run: cost, line, walks, split, snapped: snappedLines.has(line) || snappedLines.has(lineIn) };
       if (cost === 0) break;
     }
     return top;
@@ -265,6 +279,7 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
   function commit(it: Item, b: Best, category: 'C' | 'L', route = `r${routes++}`, from = -1): void {
     const { ctx } = it, t = targets(ctx), o = outOf(it.owner);
     const { line, walks, split } = b;
+    if (b.snapped) stats.crossroads++;
     const w = category === 'C' ? ctx.s.collectorWidth : ctx.s.localWidth;
     const ends = [line[0], line[line.length - 1]];
     stats.openEnds += ends.filter(e => !ctx.roads.at(e) && ctx.openAt(e)).length;
