@@ -421,7 +421,7 @@ describe('arterials stage', () => {
       ];
       for (const c of cities) {
         const base = createCityDoc({ name: c.name, seed: c.seed, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...c.settings[st.id] } })) });
-        const doc = { ...base, generatedThrough: STAGES.length - 1, stages: base.stages.map(st => (st.id === 'terrain' ? { ...st, seedOffset: c.terrainOffset } : st)) };
+        const doc = { ...base, generatedThrough: STAGES.findIndex(s => s.id === 'arterials'), stages: base.stages.map(st => (st.id === 'terrain' ? { ...st, seedOffset: c.terrainOffset } : st)) };
         const { tree } = generate({ doc, fromStage: 0, stages: STAGES });
         const footprints = districtsOf(tree).map(d => d.geometry.footprint);
         const local = loopsOf(tree.data!.roads!.map(r => r.points), 25).filter(h => districtsIn(h, footprints, 300).length < 3);
@@ -464,7 +464,7 @@ describe('arterials stage', () => {
       const base = createCityDoc({ name: 'owner 2', seed: 1420934303, now: 'n', id: 'o', size: 30000, stages: STAGES.map(st => ({ id: st.id, defaults: { ...defaultsFor(st.settings), ...owner[st.id] } })) });
       const offsets: Record<string, number> = { terrain: 1, districts: 3 };
       const doc = {
-        ...base, generatedThrough: STAGES.length - 1,
+        ...base, generatedThrough: STAGES.findIndex(s => s.id === 'arterials'),
         stages: base.stages.map(st => ({ ...st, seedOffset: offsets[st.id] ?? 0 })),
         overrides: [
           { id: 'a', stage: 'districts', kind: 'district', anchor: [-5846.024, 1925.729] as Point2, settings: { type: 'town-business' }, createdAt: 'a' },
@@ -491,7 +491,7 @@ describe('arterials stage', () => {
       // on to the nearest road instead (a small loop: the owner prefers it to a dead end).
       for (const seed of [1, 3]) {
         const base = createCityDoc({ name: `seed ${seed}`, seed, now: 'n', id: 'o', stages: STAGES.map(st => ({ id: st.id, defaults: defaultsFor(st.settings) })) });
-        const { tree } = generate({ doc: { ...base, generatedThrough: STAGES.length - 1 }, fromStage: 0, stages: STAGES });
+        const { tree } = generate({ doc: { ...base, generatedThrough: STAGES.findIndex(s => s.id === 'arterials') }, fromStage: 0, stages: STAGES });
         const stats = tree.data!.stats!;
         expect(stats.deadEnds, `seed ${seed}`).toBe(0);
         expect(stats.extended, `seed ${seed}`).toBeGreaterThan(0);

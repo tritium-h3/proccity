@@ -28,7 +28,7 @@ const pin = (kind: string, at: [number, number], settings: Record<string, string
 
 describe('sub-districts stage', () => {
   it('sits between arterials and blocks', () => {
-    expect(STAGES.map(s => s.id)).toEqual(['terrain', 'districts', 'arterials', 'subdistricts', 'blocks']);
+    expect(STAGES.map(s => s.id).slice(0, 5)).toEqual(['terrain', 'districts', 'arterials', 'subdistricts', 'blocks']);
   });
 
   it('partitions each developed superblock and leaves Undeveloped ones alone', () => {
