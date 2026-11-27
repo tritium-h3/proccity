@@ -24,15 +24,13 @@ const outline = (n: RegionNode) => n.geometry.footprint.flat().reduce((m, ring) 
 }, 0), 0);
 
 describe('blocks stage', () => {
-  it('divides every developed superblock into streets and blocks that partition it', () => {
+  it('divides every developed sub-district into streets and blocks that partition it', () => {
     const tree = city(1);
-    const byId = new Map<string, RegionNode>();
-    walk(tree, n => byId.set(n.id, n));
     let developed = 0, divided = 0;
     walk(tree, n => {
-      if (n.kind !== 'superblock') return;
-      const type = byId.get(n.id.slice(0, n.id.lastIndexOf('/')))!.attrs.type as string;
-      if (type === 'undeveloped') { expect(n.children, n.id).toHaveLength(0); return; }
+      if (n.kind !== 'subdistrict') return;
+      const type = n.attrs.district as string;
+      if (n.attrs.step === '0') { expect(n.children, n.id).toHaveLength(0); return; }
       developed++;
       expect(n.children.length, n.id).toBeGreaterThan(0);
       if (n.children.length > 1) divided++;
@@ -48,6 +46,32 @@ describe('blocks stage', () => {
     });
     expect(developed).toBeGreaterThan(10);
     expect(divided / developed).toBeGreaterThan(0.5);
+  }, 120_000);
+
+  it('records each street once, even where two sub-districts share it', () => {
+    const keys = city(1).data!.streets!.map(st => [st.points[0], st.points[st.points.length - 1]].map(p => `${Math.round(p[0])},${Math.round(p[1])}`).sort().join('|'));
+    expect(keys.length - new Set(keys).size).toBe(0);
+  }, 120_000);
+
+  it('runs a collector along open land in dense districts only', () => {
+    const tree = city(1);
+    expect(tree.data!.blockStats!.edgeStreets).toBeGreaterThan(0);
+    walk(tree, n => {
+      if (n.kind === 'collector' && n.attrs.edge) expect(['suburban', 'rural'], n.id).not.toContain(n.attrs.district);
+    });
+  }, 120_000);
+
+  it('makes bigger blocks where the step is lower', () => {
+    const sizes = new Map<number, number[]>();
+    walk(city(1), n => {
+      if (n.kind !== 'subdistrict' || n.attrs.step === '0') return;
+      const bs = n.children.filter(k => k.kind === 'block').map(k => area(k.geometry.footprint));
+      const step = Number(n.attrs.step);
+      sizes.set(step, [...(sizes.get(step) ?? []), ...bs]);
+    });
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    const steps = [...sizes.keys()].sort((a, b) => a - b);
+    expect(median(sizes.get(steps[0])!)).toBeGreaterThan(2 * median(sizes.get(steps[steps.length - 1])!));
   }, 120_000);
 });
 

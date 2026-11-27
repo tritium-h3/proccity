@@ -14,7 +14,7 @@ function ringed(w: number, h: number): DivideCtx {
   const roads = new RoadIndex();
   const ring: Point2[] = [[-12.5, -12.5], [w + 12.5, -12.5], [w + 12.5, h + 12.5], [-12.5, h + 12.5], [-12.5, -12.5]];
   roads.add({ points: ring, category: 'A', half: 12.5 });
-  return { family: 'dense', s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, openAt: () => false };
+  return { family: 'dense', step: 9, s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, openAt: () => false };
 }
 
 describe('dividing a superblock', () => {
@@ -44,7 +44,7 @@ describe('dividing a superblock', () => {
   it('cuts a piece with a road on one side only square off that side', () => {
     const roads = new RoadIndex();
     roads.add({ points: [[-100, -12.5], [1100, -12.5]], category: 'A', half: 12.5 });
-    const ctx: DivideCtx = { family: 'dense', s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, openAt: () => true };
+    const ctx: DivideCtx = { family: 'dense', step: 9, s: S, minBlockArea: 200, minDepth: 25, rng: createRng(1), roads, openAt: () => true };
     const out = divideSuperblock([rect(0, 0, 1000, 300)], ctx);
     expect(out.streets.length).toBeGreaterThan(0);
     // Every street meets a road at one end at least.

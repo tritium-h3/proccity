@@ -1,11 +1,12 @@
-// A superblock's outline, sorted by what lies beyond it: an arterial, another developed district
-// (where a shared border street goes: every block must face a road, so a district border can't be
-// left bare), open land (water, Undeveloped land, the site edge: blocks meet it with a rough edge
-// and roads may end on it), or none of these.
+// A sub-district's outline, sorted by what lies beyond it: an arterial, another developed
+// sub-district (where a shared border street goes: every block must face a road, so a border can't
+// be left bare), an Undeveloped sub-district beside a dense one (`edge`: a collector wholly on this
+// side), open land (water, Undeveloped land, the site edge: blocks meet it with a rough edge and
+// roads may end on it), or none of these.
 
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
 
-export type EdgeKind = 'A' | 'border' | 'open' | 'none';
+export type EdgeKind = 'A' | 'border' | 'edge' | 'open' | 'none';
 export interface Run { points: Point2[]; kind: EdgeKind }
 
 /** Each ring of the footprint as runs of like edges, classified at each edge's midpoint. */
