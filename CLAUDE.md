@@ -13,8 +13,9 @@ v1's height-grid design is superseded), and **districts**
 (`docs/superpowers/specs/2026-11-23-districts-design.md`; the owner's zoning notes are in
 `docs/notes/zoningBlocks.md`), **arterials**
 (`docs/superpowers/specs/2026-11-23-arterials-design.md`), **sub-districts**
-(`docs/superpowers/specs/2026-11-27-subdistricts-design.md`) and **blocks**
-(`docs/superpowers/specs/2026-11-25-blocks-design.md`). Each real stage is designed with the
+(`docs/superpowers/specs/2026-11-27-subdistricts-design.md`), **blocks**
+(`docs/superpowers/specs/2026-11-25-blocks-design.md`) and **lots**
+(`docs/superpowers/specs/2026-11-27-lots-design.md`). Each real stage is designed with the
 owner one at a time.
 
 **Defaults (2026-11-25, the owner's numbers):** sites are **10 km** (the slider runs 5–60 km),
@@ -35,7 +36,7 @@ settings. Physical things don't scale: road width, max grade, vertical tolerance
 width. Tests written at 2 km pass `SMALL_SCALE` (`stages/testing.ts`), and 30 km tests check
 that the structure holds. A saved city keeps its own settings and site size.
 
-Lots come next.
+Lot sectioning comes next.
 
 ## Architecture (`src/`)
 
@@ -302,6 +303,25 @@ Lots come next.
     one of them, one draw per block from its own stream. Zone pins (`overridable.block`) hold only
     where the generator could have chosen them.
   - Site data: `streets` (centrelines) and `blockStats` (its own key: the arterials own `stats`).
+- **`stages/lots/`:** every zoned block is cut into lots (and open ground), each lot facing at
+  least one road its zone allows; other sides may face anything. Lot size comes from zone and
+  density step together (`rules.ts`: a target frontage × depth per zone at step 9, × `lotFactor`;
+  big-lot zones MC MO UO UCO UCOR take a block-sized target, so most of their blocks stay one lot).
+  The blocks stage's `smallestLot` reads the same table.
+  - `cut.ts` (the owner's approach C): a spine cut along the block where it's deeper than 1.4 lot
+    depths and each row fronts along half the spine at least (repeated spines made strips fronting
+    only on the block's ends); then cuts square to the frontage road at whole numbers of
+    frontages. Every cut leaves each piece on an allowed road, a minimum lot, and squareness as
+    blocks. Cuts are straight, a hair-thin kerf merged into one side (exact partition). **Open
+    ground** is the land more than twice the lot depth from an allowed road (the owner chose this
+    over rear lots with access strips); measured from every edge, far sides on roads the zone
+    can't face became lots with no frontage. The allowed test is precomputed per block as an
+    index of the outline's allowed stretches (the road index per sample was two thirds of the time).
+  - `faces.ts`: `edges`, one character per outline edge (`A` `C` `L`, `-` another lot, `o` open
+    land), for buildings to read; `front`, the allowed category the lot runs along furthest,
+    sampled along the whole outline.
+  - Site data `lotStats`. About 30–40k lots in a 10 km city and 13–19 MB saved: the owner's call
+    to store them resolved for now ("a question for future us").
 - **`pipeline/`:** `generate.ts` prunes from `fromStage` and re-runs through
   `generatedThrough`. Each stage gets its own seed (`stageSeed(citySeed, id, seedOffset)`),
   so regenerating stage k never disturbs earlier stages and undo is exact.
@@ -340,7 +360,7 @@ Lots come next.
   renderer reuses the terrain renderer (`buildTerrain` with a tint) and colours it from a
   texture baked from the district footprints (`scene/rasterise.ts`, shared via
   `renderers/tint.ts`), so **districts add no triangles**. Arterials tint superblocks and road
-  strips with their district's colour. Sub-districts tint the same way, paler as the step falls. Blocks tint zones and streets into a 4096 px texture (2.4 m a pixel at 10 km) and reuse the
+  strips with their district's colour. Sub-districts tint the same way, paler as the step falls. Lots tint like blocks, each lot's colour nudged ±6% so neighbours read apart, open ground muted green. Blocks tint zones and streets into a 4096 px texture (2.4 m a pixel at 10 km) and reuse the
   arterial ribbons (`addArterials`). Roads themselves are **ribbons** draped on the ground
   as drawn (`scene/heightSampler.ts`, from the smoothed mesh), sampled every site/300. They
   run at deck height over bridges. Bridge decks are geometry too. At 30 km a road is under 2

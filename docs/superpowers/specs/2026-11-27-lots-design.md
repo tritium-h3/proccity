@@ -141,3 +141,33 @@ for less, but maybe that's a question for future us." Parked, not solved.
 
 - Exact frontage-run computation and how corner lots pick their front.
 - Test layout, following blocks (pure modules: rules, cutting, faces).
+
+## As built (2026-11-27)
+
+- **Spine cut while a piece is deeper than 1.4 × target depth** (the blocks' "cut while a side
+  exceeds 1.4 targets"), not 2 × 1.4: at that, a 50 m block of 24 m lots stayed one row of 50 m
+  lots. **And each row must front along at least half the spine**: repeated spine cuts otherwise
+  left strips the block's length, fronting only on its ends (seen in a town HCR block).
+- **Open ground is the land more than twice the lot depth from an allowed road** (plus band bits
+  with no frontage of their own), not the block inset from every edge: the inset left far sides on
+  roads the zone can't face as lots with no frontage (a 78 ha "lot" in a 190 ha UO block; an HCO
+  strip on an arterial). The cost is more open ground: 380–630 ha a city, in ~430 blocks (e.g. HC
+  blocks, which face collectors only, are open beyond two lot depths of a collector).
+- **A lot's front is sampled along its whole outline**: a short allowed stretch at the end of a
+  side that is mostly arterial was missed by the per-edge codes.
+- **Speed:** the allowed test is precomputed per block (an index of the outline's allowed 2 m
+  stretches): 6.8 → 3.4 s before the later fixes; ~3% fewer lots than exact sampling.
+- The arterial tests now stop at arterials: generating the owner's 30 km city through lots timed
+  them out.
+
+Numbers at 10 km, seeds 1–3:
+
+| | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| lots | 34,107 | 29,010 | 41,820 |
+| blocks with open ground (ha) | 428 (382) | 415 (626) | 456 (439) |
+| lots without allowed frontage | 0 | 0 | 0 |
+| lots stage | 5.2 s | 4.3 s | 6.3 s |
+| saved city | 15.5 MB | 13.1 MB | 18.9 MB |
+
+Blocks rose 1–2% when `smallestLot` moved to this table (1,934 / 1,534 / 2,275).
