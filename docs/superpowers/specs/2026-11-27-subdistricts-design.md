@@ -25,9 +25,12 @@ of undeveloped land as the city thins.
   Suburban 3, Town core 2, Town business 2, Rural 1**. Levels of neighbouring types
   **overlap**, so a district border is a partial step.
 - Undeveloped sub-districts: more likely where the field is low, and **more in sparser types**.
-- A level sets **spacing**: block size and collector spacing now, **lot size** in the future
-  lots stage. **Building height, size and use stay with the zone.** A denser sub-district has
-  the same kinds of buildings, closer together.
+- A level sets **spacing**: block size and collector spacing now. **Lot size** (future lots
+  stage) will combine the zone and the density; the specifics are for that stage. **Building
+  height, size and use stay with the zone.** A denser sub-district has the same kinds of
+  buildings, closer together.
+- Sub-districts have **codes and names**: the type's letter plus the density step (**F9**),
+  and the type plus a level word (**Financial High**). See *Codes and names*.
 - A **collector runs along every border between developed sub-districts** (as along district
   borders today). Where a developed sub-district meets an **Undeveloped sub-district**: a
   collector in the dense types (Town core, Town business, Low urban, Urban, Financial), a rough
@@ -89,6 +92,18 @@ is the dense one):
 | Urban | 6–8 | 3 |
 | Financial | 8–9 | 2 |
 
+### Codes and names
+
+- **Code:** the type's letter plus the step: R Rural, S Suburban, T Town core, B Town business,
+  L Low urban, U Urban, F Financial. The number means the same in every type (U7 and L7 are
+  equally dense), but only the type's own steps are valid. **0 is Undeveloped**: U0 is an
+  Undeveloped sub-district in an Urban district. Letter-then-digit can't be mistaken for a zone
+  code (LR, UCO).
+- **Name:** the type plus a level word. Three levels: High, Mid, Low (Urban High = U8). Two:
+  High, Low (Financial High = F9, Financial Low = F8). One level: the type alone (Rural = R1).
+  Undeveloped sub-districts are named "Undeveloped".
+- Letters and words were proposed by Claude; the owner set the pattern (Financial High, F9).
+
 Ranges overlap where types may border (the districts neighbour table), so crossing a border
 can cost one step or none. The table lives in the stage's `rules.ts` as the source of truth;
 the step numbers are a starting point for the owner's eyes.
@@ -113,9 +128,8 @@ the step numbers are a starting point for the owner's eyes.
   superblocks run 0–875 ha, median ~100) is cut into round(area / size) pieces with the
   districts stage's seeded, Lloyd-relaxed Voronoi (`districts/cut.ts`, reused, not copied).
   Smaller superblocks are one sub-district. Undeveloped superblocks get none.
-- Node kind `subdistrict`, ids `…/superblock:k/sub:n`. Attrs: `level` (`'1'`–`'3'` or
-  `'undeveloped'`) and `step` (1–9, absent when Undeveloped). Type stays inherited from the
-  district.
+- Node kind `subdistrict`, ids `…/superblock:k/sub:n`. Attrs: `code` (`'F9'`, `'U0'`) and
+  `step` (0–9; 0 is Undeveloped). Type stays inherited from the district.
 
 ### Undeveloped sub-districts
 
@@ -135,15 +149,15 @@ the step numbers are a starting point for the owner's eyes.
 
 ### Pins
 
-`overridable.subdistrict.level`, a choice of `1`, `2`, `3`, `undeveloped`. `validateOverride`
-refuses a level beyond its type's count, and `undeveloped` in Financial is allowed as a pin (the
-owner's call beats the generator's rule). A pin holds even when it disconnects a neighbour; the
+`overridable.subdistrict.step`, a choice of 0–9, shown as the code and name for the region's
+type. `validateOverride` refuses a step outside the type's range (0 is always valid, Financial
+included: the owner's pin beats the generator's rule). A pin holds even when it disconnects a neighbour; the
 cut-off sub-district stays developed, its blocks counted as `roadless` by the blocks stage.
 Overrides re-attach by anchor point as for every stage.
 
 ### What blocks changes
 
-- Leaves are now **developed sub-districts** (`level !== 'undeveloped'`), not superblocks.
+- Leaves are now **developed sub-districts** (`step > 0`), not superblocks.
 - **Edges** (`edges.ts`, `stage.ts` phase 1), by what lies beyond:
   - arterial: `A` (unchanged);
   - another developed sub-district (same district or not): `border`, half a collector each side,
@@ -159,9 +173,9 @@ Overrides re-attach by anchor point as for every stage.
 
   The family (dense or sparse) still decides how cuts follow the terrain (plan direction vs
   contours), as now.
-- **Minimum block size by step:** the smallest lot of the type scales by a **lot factor** per
-  step, 1 at step 9 rising to 2 at step 1 (each side). This is the same factor the lots stage
-  will use for lot size.
+- **Minimum block size by step (interim):** the smallest lot of the type scales by a factor per
+  step, 1 at step 9 rising to 2 at step 1 (each side). The lots stage will define lot size from
+  zone and density properly and may replace this.
 
 ### Rendering
 
@@ -173,7 +187,7 @@ Undeveloped sub-districts as Undeveloped land.
 ### Stats
 
 Site data `subdistrictStats` (its own key, as `blockStats`): sub-districts, undeveloped (count
-and ha), ha per step, `openRefused`.
+and ha), ha per code, `openRefused`. The Inspector shows a sub-district's code and name.
 
 ### Saved cities
 
