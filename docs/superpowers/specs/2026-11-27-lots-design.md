@@ -66,7 +66,7 @@ call, for the owner's eyes):
 |---|---|---|---|---|
 | LR | 12 × 24 m | 18 × 37 | 22 × 44 | single-family |
 | LC, LO | 20 × 30 m | 31 × 46 | 37 × 55 | ample parking |
-| HR, HC, HO, HCR, HCO | 7 × 20 m | (Town, steps 4–6: 9–11 × 26–31) | | townhouses, shopfronts |
+| HR, HC, HO, HCR, HCO | 10 × 25 m (was 7 × 20: the owner found them too small) | (Town, steps 4–6: 13–15 × 33–39) | | townhouses, shopfronts |
 | MR, MCR | 25 × 30 m | (Low urban, 5–7: 29–35 × 35–42) | | apartment blocks |
 | UR, UCR | 30 × 30 m | (Urban, 6–8: 33–39) | | residential towers |
 | MC, MO, UO, UCO, UCOR | **a block** | | | big-lot: the step's block depth × length |
@@ -171,3 +171,7 @@ Numbers at 10 km, seeds 1–3:
 | saved city | 15.5 MB | 13.1 MB | 18.9 MB |
 
 Blocks rose 1–2% when `smallestLot` moved to this table (1,934 / 1,534 / 2,275).
+
+**2026-11-27, later:** H-zone lots raised from 7 × 20 m to 10 × 25 m at step 9 (the owner: "the
+small lots are too small"). Lots 26,362 / 24,305 / 33,198; saved 12.4 / 11.3 / 15.5 MB; lots stage
+3.3–4.3 s; open ground 313–583 ha.

@@ -14,7 +14,7 @@ describe('lot sizes', () => {
     expect(BIG_LOT.has('MC')).toBe(true);
   });
   it('scales by the Lot size setting', () => {
-    expect(lotTarget('HR', 9, 2)).toEqual({ frontage: 14, depth: 40 });
+    expect(lotTarget('HR', 9, 2)).toEqual({ frontage: 20, depth: 50 });
   });
   it('has a target for every zone, and a modest minimum even for big lots', () => {
     for (const z of ZONES) expect(lotTarget(z, 5).frontage, z).toBeGreaterThan(0);
