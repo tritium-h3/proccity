@@ -124,6 +124,9 @@ const ALIGN = 1; // m
 // A local road may end on an arterial only in a piece over this many target blocks (measured: 2
 // keeps 40–70 such ends a 10 km city, down from 130–200, without bigger blocks).
 const ARTERIAL_FALLBACK = 2;
+// …or one over this many target lengths: a strip between arterials, under the area, stayed a
+// kilometre-long block of lots (seen in seed 1); twice the length gets it a cross street.
+const ARTERIAL_LONG = 2;
 const MAX_TURN_ACROSS = Math.PI / 6;
 
 interface Plan { origin: Point2; across: number }
@@ -207,7 +210,7 @@ export function divideAll(items: Item[]): { byOwner: Map<string, Divided>; stats
     // local road meeting an arterial, but allow it. Allowed whenever no other cut fitted, it put
     // 130–200 local ends a city back on the arterials; never, it left Rural blocks too big.
     const b = best(it.piece, 'L', candidates(it.piece, box, it.ctx, t), it.ctx, false)
-      ?? (area(it.piece) > ARTERIAL_FALLBACK * t.depth * t.length ? best(it.piece, 'L', candidates(it.piece, box, it.ctx, t), it.ctx, true) : null);
+      ?? (area(it.piece) > ARTERIAL_FALLBACK * t.depth * t.length || box.long > ARTERIAL_LONG * t.length ? best(it.piece, 'L', candidates(it.piece, box, it.ctx, t), it.ctx, true) : null);
     if (b) { if (b.line.some((_, i, l) => (i === 0 || i === l.length - 1) && it.ctx.roads.at(l[i])?.category === 'A')) stats.localOnArterial++; commit(it, b, 'L'); }
     return !!b;
   }

@@ -172,3 +172,13 @@ top of each other; road categories don't matter). Tried first, it wins whenever 
 accept it, since most cuts cost nothing: no score, so no extra blocks. Staggered local-end pairs
 (offset 6–35 m) fell from 87 / 82 / 98 to 54 / 36 / 43; blocks 1,904 / 1,516 / 2,246. A reach of a
 whole depth was worse (more staggering under 35 m, more blocks).
+
+### Long strips (added 2026-11-27)
+
+The owner saw blocks with very many lots. Of seed 1's 23 blocks over 600 m long, about six were
+strips between arterials, under two target blocks in area, so no local road could cross them. The
+fallback now also allows a piece over **two target lengths** (`ARTERIAL_LONG`): 21 long blocks,
+the most crowded block 80 → 48 lots, local ends on arterials 41 → 53 (seed 1) and 72 → 83 (seed 3).
+A threshold of 1.5 lengths fixed six but nearly doubled the arterial junctions. The rest are steep
+strips along a 37% hillside (straight cross streets would climb 36–37%, past the 30% ceiling;
+diagonals fail the 50° junction angle), shape refusals, and Rural pieces within their slack.
