@@ -260,8 +260,21 @@ Lots come next.
     this side, "big lots, then across the street nothing") or **open** (water, Undeveloped land,
     the site edge, and Undeveloped sub-districts beside Suburban or Rural). Blocks meet open land
     with a rough edge; the owner wants rough outskirts and no shore or park-edge roads.
-  - `divide.ts`: largest piece first, cut across its long side while it's long, then along it
-    while it's deep, positioned so blocks come out near the target size. Block depth, length and
+  - **The principle (the owner, 2026-11-27): a road carries on as far as it can, and the bigger
+    the road, the wider the spacing of the junctions along it** (arterials met rarely, collectors
+    about once a block length, local roads branching freely). `junctions.ts` measures it (the
+    stats count junctions closer than the spacing, by category); as a score it was tried and
+    dropped (more blocks, no fewer arterial junctions).
+  - `divide.ts`: **one queue for the whole site** (`divideAll`), each piece carrying its own
+    sub-district's context. Largest piece first, cut across its long side while it's long, then
+    along it while it's deep, positioned so blocks come out near the target size. **A cut that
+    meets a collector or local road carries on** into the queued piece beyond (`carryOn`), judged
+    by that piece's own rules, in line (within half the road's width, turning under 30°), and so
+    on until a piece refuses; across arterials only as a collector, and never into a piece already
+    block-sized. Segments of one street share a `route` (in `data.streets`, the first segment's
+    id): the seam for street names. **Local roads keep off arterials** unless the piece can be cut
+    no other way and is over two target blocks (`ARTERIAL_FALLBACK`; the owner's notes disfavour
+    but allow it). Block depth, length and
     collector spacing come from the step, geometric between the Densest (step 9) and Sparsest
     (step 1) settings (`spacing`); the smallest lot grows with `lotFactor` (interim, until lots).
     The family (sparse: Suburban and Rural) only decides how cuts follow the terrain. A collector while the piece is longer than the

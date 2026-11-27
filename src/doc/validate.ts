@@ -88,7 +88,7 @@ function checkNode(v: unknown, path: string) {
       const at = `${path}.data.streets`;
       if (!Array.isArray(v.data.streets)) fail(at, 'should be an array of streets');
       v.data.streets.forEach((r: unknown, i: number) => {
-        if (!isObj(r) || typeof r.id !== 'string' || (r.category !== 'C' && r.category !== 'L') || typeof r.width !== 'number' || !Array.isArray(r.points)) fail(`${at}[${i}]`, 'should be { id, points, category, width }');
+        if (!isObj(r) || typeof r.id !== 'string' || (r.category !== 'C' && r.category !== 'L') || typeof r.width !== 'number' || !Array.isArray(r.points) || (r.route !== undefined && typeof r.route !== 'string')) fail(`${at}[${i}]`, 'should be { id, points, category, width, route? }');
         (r.points as unknown[]).forEach((p, j) => checkPoint(p, `${at}[${i}].points[${j}]`));
       });
     }

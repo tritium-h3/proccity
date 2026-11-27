@@ -11,7 +11,8 @@ import { makeSlab } from '../../grammar/slab.js';
 import { TYPE_LABEL, type DistrictType } from '../districts/rules.js';
 import { createRng } from '../../pipeline/seeds.js';
 import type { Stage } from '../types.js';
-import { divideSuperblock, HARD_GRADE, type BlockSettings, type DivideCtx, type Street } from './divide.js';
+import { divideAll, HARD_GRADE, type BlockSettings, type DivideCtx, type Item, type Street } from './divide.js';
+import { Junctions } from './junctions.js';
 import { classifyBoundary, runsOf } from './edges.js';
 import { makeField } from './field.js';
 import { heightRaster } from './height.js';
@@ -24,7 +25,7 @@ import { facesOf, pickZone, zoneFits } from './zones.js';
 const PROBE = 2; // m beyond an outline edge, to see what's on the other side
 const CRUMB = 100; // m²
 
-export interface StreetData { id: string; points: Point2[]; category: 'C' | 'L'; width: number }
+export interface StreetData { id: string; points: Point2[]; category: 'C' | 'L'; width: number; route?: string }
 
 export const blocks: Stage = {
   id: 'blocks',
@@ -96,6 +97,7 @@ export const blocks: Stage = {
     const borders = new Map<string, { lines: Point2[][]; strips: MultiPolygon[]; edges: Point2[][]; edgeStrips: MultiPolygon[]; pieces: MultiPolygon[]; open: RoadIndex }>();
     const seen = new Set<string>();
     const streetIds = new Map<string, string>();
+    const routeIds = new Map<string, string>();
     const key = (line: Point2[]) => [line[0], line[line.length - 1]].map(p => `${Math.round(p[0])},${Math.round(p[1])}`).sort().join('|');
     for (const sb of superblocks) {
       const dense = familyOf(attr(sb, 'type') as Developed) === 'dense';
@@ -150,20 +152,31 @@ export const blocks: Stage = {
       borders.set(sb.id, { lines, strips, edges, edgeStrips, pieces, open });
     }
 
-    // 2. Divide each superblock.
+    // 2. Divide every sub-district in one queue, each piece by its own sub-district's context, so
+    //    streets can carry on from one into the next.
+    const junctions = new Junctions();
+    const fields = new Map<string, ReturnType<typeof makeField>>();
+    const items: Item[] = [];
     for (const sb of superblocks) {
-      const type = attr(sb, 'type') as Developed;
+      const type = attr(sb, 'type') as Developed, family = familyOf(type);
       const step = Number(sb.attrs.step);
+      if (!fields.has(family)) fields.set(family, makeField(height, family, s.localGrade / 100, (HARD_GRADE * s.localGrade) / 100));
       // Interim: the smallest lot grows as the step falls (the lots stage will own lot size).
       const lot = smallestLot(type), f = lotFactor(step);
+      const open = borders.get(sb.id)!.open;
       const ctx: DivideCtx = {
-        family: familyOf(type), step, s, minBlockArea: lot.area * f * f, minDepth: lot.depth * f, rng, roads,
-        field: makeField(height, familyOf(type), s.localGrade / 100, (HARD_GRADE * s.localGrade) / 100), height,
-        openAt: p => !!borders.get(sb.id)!.open.at(p),
+        family, step, s, minBlockArea: lot.area * f * f, minDepth: lot.depth * f, rng, roads, junctions,
+        field: fields.get(family), height, openAt: p => !!open.at(p),
       };
+      for (const piece of borders.get(sb.id)!.pieces) items.push({ owner: sb.id, piece, ctx });
+    }
+    const divided = divideAll(items);
+    for (const [k, v] of Object.entries(divided.stats)) stats[k] = (stats[k] ?? 0) + v;
+
+    for (const sb of superblocks) {
+      const type = attr(sb, 'type') as Developed;
       const border = borders.get(sb.id)!;
-      const out = divideSuperblock(border.pieces, ctx);
-      for (const [k, v] of Object.entries(out.stats)) stats[k] = (stats[k] ?? 0) + v;
+      const out = divided.byOwner.get(sb.id) ?? { streets: [], strips: [], blocks: [] };
       stats.subdistricts++;
       // A superblock no cut fits is still a block (one child), so it gets a zone like any other.
       const kids: RegionNode[] = [];
@@ -174,7 +187,13 @@ export const blocks: Stage = {
         const kind = st.category === 'C' ? 'collector' : 'local';
         // A shared border street keeps the id it was first recorded under.
         const id = record ? `st:${streets.length}` : streetIds.get(key(st.points)) ?? `st:${streets.length}`;
-        if (record) { streets.push({ id, ...st }); streetIds.set(key(st.points), id); }
+        if (record) {
+          // A route is named by its first recorded segment.
+          let route: string | undefined;
+          if (st.route) { route = routeIds.get(st.route) ?? id; routeIds.set(st.route, route); }
+          streets.push({ id, points: st.points, category: st.category, width: st.width, ...(route ? { route } : {}) });
+          streetIds.set(key(st.points), id);
+        }
         kids.push(node(`${kind}:${count[kind]++}`, kind, strip, { road: id, width: st.width, district: type, ...extra }));
       };
       border.lines.forEach((line, i) => {

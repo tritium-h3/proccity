@@ -59,6 +59,31 @@ describe('blocks stage', () => {
     });
   }, 240_000);
 
+  it('carries streets on: longer routes, some across sub-districts', () => {
+    const tree = city(1);
+    const streets = tree.data!.streets!;
+    const ids = new Set(streets.map(st => st.id));
+    const len = (ps: number[][]) => ps.slice(1).reduce((m, p, i) => m + Math.hypot(p[0] - ps[i][0], p[1] - ps[i][1]), 0);
+    const routes = new Map<string, number>();
+    for (const st of streets) {
+      if (st.route) expect(ids.has(st.route), st.route).toBe(true);
+      routes.set(st.route ?? st.id, (routes.get(st.route ?? st.id) ?? 0) + len(st.points));
+    }
+    const L = [...routes.values()].sort((a, b) => a - b);
+    expect(L[L.length >> 1]).toBeGreaterThan(1.3 * 220);
+    expect(tree.data!.blockStats!.continued).toBeGreaterThan(0);
+    // A route with segments under two different sub-districts.
+    const owners = new Map<string, Set<string>>();
+    walk(tree, n => {
+      if (n.kind !== 'collector' && n.kind !== 'local') return;
+      const st = streets.find(x => x.id === n.attrs.road);
+      if (!st?.route) return;
+      const sub = n.id.slice(0, n.id.lastIndexOf('/'));
+      owners.set(st.route, (owners.get(st.route) ?? new Set()).add(sub));
+    });
+    expect([...owners.values()].some(o => o.size > 1)).toBe(true);
+  }, 120_000);
+
   it('records each street once, even where two sub-districts share it', () => {
     const keys = city(1).data!.streets!.map(st => [st.points[0], st.points[st.points.length - 1]].map(p => `${Math.round(p[0])},${Math.round(p[1])}`).sort().join('|'));
     expect(keys.length - new Set(keys).size).toBe(0);
