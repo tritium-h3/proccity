@@ -162,3 +162,13 @@ Numbers at 10 km, seeds 1–3, before → after:
 | land in blocks over 20 ha | 0–4% | 0 / 4.2 / 0% |
 
 The blocks stage takes 1.2–1.6 s.
+
+### Crossroad favouritism (added 2026-11-27)
+
+The owner still saw jogs where two streets met a road close together. Every candidate is now
+preceded by a variant whose ends are moved, within half a block depth, to line up with a street
+ending on the far side of the same road (`snapEnds`; the far side only, or two roads would lie on
+top of each other; road categories don't matter). Tried first, it wins whenever the piece's rules
+accept it, since most cuts cost nothing: no score, so no extra blocks. Staggered local-end pairs
+(offset 6–35 m) fell from 87 / 82 / 98 to 54 / 36 / 43; blocks 1,904 / 1,516 / 2,246. A reach of a
+whole depth was worse (more staggering under 35 m, more blocks).
