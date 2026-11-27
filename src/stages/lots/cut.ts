@@ -23,14 +23,14 @@ const SAMPLE = 2; // m between outline samples when finding frontage
 const SQUARE = 0.7, SQUARE_KEEP = 0.9;
 const KERF = 0.01; // m: cuts are a hair-thin band, merged back into one side
 
-interface Run { points: { p: Point2; normal: Point2 }[]; length: number }
+interface Run { points: { p: Point2; normal: Point2; len: number }[]; length: number }
 
 /** The runs of a piece's outline along allowed roads, longest first, each a list of samples with
  *  the inward normal there (rings keep the interior on their left). */
 function frontage(piece: MultiPolygon, allowed: (p: Point2) => boolean): Run[] {
   const runs: Run[] = [];
   for (const poly of piece) for (const ring of poly) {
-    const samples: { p: Point2; normal: Point2; ok: boolean }[] = [];
+    const samples: { p: Point2; normal: Point2; ok: boolean; len: number }[] = [];
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i], b = ring[(i + 1) % ring.length];
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -39,7 +39,7 @@ function frontage(piece: MultiPolygon, allowed: (p: Point2) => boolean): Run[] {
       const normal: Point2 = [-(b[1] - a[1]) / L, (b[0] - a[0]) / L];
       for (let k = 0; k < n; k++) {
         const p: Point2 = [a[0] + ((b[0] - a[0]) * (k + 0.5)) / n, a[1] + ((b[1] - a[1]) * (k + 0.5)) / n];
-        samples.push({ p, normal, ok: allowed(p) });
+        samples.push({ p, normal, ok: allowed(p), len: L / n });
       }
     }
     // Start at a change, so a run doesn't wrap round the ring's start.
@@ -49,8 +49,8 @@ function frontage(piece: MultiPolygon, allowed: (p: Point2) => boolean): Run[] {
       const x = samples[(s + j) % samples.length];
       if (!x.ok) { cur = null; continue; }
       if (!cur) runs.push((cur = { points: [], length: 0 }));
-      cur.points.push({ p: x.p, normal: x.normal });
-      cur.length += SAMPLE;
+      cur.points.push({ p: x.p, normal: x.normal, len: x.len });
+      cur.length += x.len;
     }
   }
   return runs.sort((a, b) => b.length - a.length);
@@ -128,8 +128,10 @@ export function cutBlock(block: MultiPolygon, ctxIn: LotCtx): { lots: MultiPolyg
     if (!sides.every(side => area(side) >= minArea && obb(side).short >= minSide)) return false;
     const need = Math.min(SQUARE, SQUARE_KEEP * fill(piece));
     return sides.every(side => {
+      // The target frontage is a minimum (the owner, after seeing lots half that wide): lots
+      // stretch rather than narrow.
       const run = frontage(side, ctx.allowed)[0]?.length ?? 0;
-      if (run < 0.5 * f) return false;
+      if (run < f - 0.1) return false;
       const final = rectWidth(side) <= SLACK * d && run <= SLACK * f;
       return !final || fill(side) >= need;
     });
@@ -159,11 +161,18 @@ export function cutBlock(block: MultiPolygon, ctxIn: LotCtx): { lots: MultiPolyg
     }
     // Square to the street, a whole number of frontages from one end.
     for (const run of frontage(piece, ctx.allowed)) {
-      if (run.length <= SLACK * f) break;
-      const n = Math.max(2, Math.round(run.length / f)), at = Math.floor(n / 2) / n;
+      // As many whole frontages as fit, so every lot is 1–2 frontages wide.
+      const n = Math.floor(run.length / f);
+      if (n < 2) break;
+      const at = Math.floor(n / 2) / n;
       for (const o of OFFSETS) {
-        const k = Math.min(run.points.length - 1, Math.max(0, Math.round((at + o) * run.points.length)));
-        const { p, normal } = run.points[k];
+        // The point that far along the run (by length: a sample's middle was up to half a sample
+        // off, enough to leave a lot under the minimum frontage).
+        let want = Math.min(0.999, Math.max(0.001, at + o)) * run.length, k = 0;
+        while (k < run.points.length - 1 && want > run.points[k].len) want -= run.points[k++].len;
+        const { p: mid, normal, len } = run.points[k];
+        const shift = want - len / 2; // along the run, from the sample's middle
+        const p: Point2 = [mid[0] + normal[1] * shift, mid[1] - normal[0] * shift];
         const c = chordThrough(piece, [p[0] + normal[0] * 0.01, p[1] + normal[1] * 0.01], normal);
         const s = c && split(piece, c);
         if (s && ok(piece, s)) return s;
