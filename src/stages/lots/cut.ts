@@ -6,8 +6,8 @@
 // square to the street matters more than the terrain at this size.
 
 import type { MultiPolygon, Point2 } from '../../doc/types.js';
-import { difference, offsetPolygons, offsetPolyline, union } from '../../grammar/clipper.js';
-import { area } from '../../grammar/polygon.js';
+import { difference, offsetPolyline, union } from '../../grammar/clipper.js';
+import { area, simplifyLine } from '../../grammar/polygon.js';
 import { fill, rectWidth } from '../blocks/divide.js';
 import { chordThrough, extend, obb, splitBand } from '../blocks/geometry.js';
 
@@ -64,29 +64,75 @@ function split(piece: MultiPolygon, line: [Point2, Point2]): [MultiPolygon, Mult
   return [union(s[1], s[0]), s[2]];
 }
 
-export function cutBlock(block: MultiPolygon, ctx: LotCtx): { lots: MultiPolygon[]; open: MultiPolygon | null; refused: number } {
+const GRID = 10; // m: cells of the block outline's allowed-stretch index
+const ON = 0.05; // m: a point this close to an allowed stretch is on it
+
+/** `allowed`, asked once along the block's outline: a lot's frontage can only lie on the block's
+ *  outline (cut lines face no road), so later questions test a point against the allowed stretches
+ *  of the block's edges. Asking the road index for every sample of every candidate took two thirds
+ *  of the stage's time. */
+function outlineMap(block: MultiPolygon, allowed: (p: Point2) => boolean): (p: Point2) => boolean {
+  const cells = new Map<string, [Point2, Point2][]>();
+  const add = (a: Point2, b: Point2) => {
+    for (let x = Math.floor((Math.min(a[0], b[0]) - ON) / GRID); x <= Math.floor((Math.max(a[0], b[0]) + ON) / GRID); x++)
+      for (let z = Math.floor((Math.min(a[1], b[1]) - ON) / GRID); z <= Math.floor((Math.max(a[1], b[1]) + ON) / GRID); z++) {
+        const k = `${x},${z}`, list = cells.get(k);
+        if (list) list.push([a, b]); else cells.set(k, [[a, b]]);
+      }
+  };
+  for (const poly of block) for (const ring of poly) for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / SAMPLE));
+    // Each stretch of the edge is allowed or not by its middle.
+    for (let k = 0; k < n; k++) {
+      const p: Point2 = [a[0] + ((b[0] - a[0]) * (k + 0.5)) / n, a[1] + ((b[1] - a[1]) * (k + 0.5)) / n];
+      if (allowed(p)) add([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n], [a[0] + ((b[0] - a[0]) * (k + 1)) / n, a[1] + ((b[1] - a[1]) * (k + 1)) / n]);
+    }
+  }
+  return p => (cells.get(`${Math.floor(p[0] / GRID)},${Math.floor(p[1] / GRID)}`) ?? []).some(([a, b]) => {
+    const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz;
+    const t = L2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / L2)) : 0;
+    return Math.hypot(a[0] + dx * t - p[0], a[1] + dz * t - p[1]) <= ON;
+  });
+}
+
+export function cutBlock(block: MultiPolygon, ctxIn: LotCtx): { lots: MultiPolygon[]; open: MultiPolygon | null; refused: number } {
+  const ctx: LotCtx = { ...ctxIn, allowed: outlineMap(block, ctxIn.allowed) };
   const { frontage: f, depth: d } = ctx.target;
   const lots: MultiPolygon[] = [];
   let refused = 0, open: MultiPolygon | null = null;
   let start: MultiPolygon[] = [block];
 
-  // Open ground: lots stretch to the middle up to twice their depth; beyond that the middle is
-  // left open (the owner chose this over rear lots with access strips).
-  if (rectWidth(block) > 4 * d) {
-    const inner = offsetPolygons(block, -2 * d);
-    if (area(inner) >= f * d) {
-      open = inner;
-      start = difference(block, inner).map(poly => [poly]);
+  // Open ground: lots stretch to the middle up to twice their depth from an allowed road; land
+  // beyond that is left open (the owner chose this over rear lots with access strips). Measured
+  // from allowed roads, not every edge: a block's far side on a road its zone can't face (or none)
+  // otherwise became a lot with no frontage.
+  const runs = frontage(block, ctx.allowed);
+  if (runs.length) {
+    // Runs are 2 m samples: simplified first, or offsetting them dominated the stage.
+    const band = union(runs.flatMap(r => offsetPolyline(simplifyLine(r.points.map(x => x.p), 0.5), 2 * d, 'round')), []);
+    const rest = difference(block, band);
+    if (area(rest) >= f * d) {
+      const land = difference(block, rest).map(poly => [poly] as MultiPolygon);
+      // Bits of the band with no frontage of their own (cut off by the block's shape) go open too.
+      const fronted = land.filter(p => (frontage(p, ctx.allowed)[0]?.length ?? 0) >= 0.5 * f);
+      const stray = land.filter(p => !fronted.includes(p));
+      open = stray.length ? union(rest, stray.flat()) : rest;
+      start = fronted;
     }
   }
 
   const minArea = 0.5 * f * d, minSide = 0.5 * Math.min(f, d);
-  const needsCut = (p: MultiPolygon) => rectWidth(p) > SLACK * d || (frontage(p, ctx.allowed)[0]?.length ?? 0) > SLACK * f;
+  // Cheap tests first: frontage samples the road index all round the outline.
   const ok = (piece: MultiPolygon, sides: [MultiPolygon, MultiPolygon]) => {
+    if (!sides.every(side => area(side) >= minArea && obb(side).short >= minSide)) return false;
     const need = Math.min(SQUARE, SQUARE_KEEP * fill(piece));
-    return sides.every(side => area(side) >= minArea && obb(side).short >= minSide
-      && (frontage(side, ctx.allowed)[0]?.length ?? 0) >= 0.5 * f
-      && (needsCut(side) || fill(side) >= need));
+    return sides.every(side => {
+      const run = frontage(side, ctx.allowed)[0]?.length ?? 0;
+      if (run < 0.5 * f) return false;
+      const final = rectWidth(side) <= SLACK * d && run <= SLACK * f;
+      return !final || fill(side) >= need;
+    });
   };
 
   const queue = start.filter(p => area(p) > 0).map(p => ({ p, a: area(p) }));

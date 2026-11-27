@@ -17,9 +17,16 @@ describe('lot faces', () => {
     // rect() runs (50,0) → (100,0) → (100,50) → (50,50): south, east, north, west.
     expect(edgesOf(lot, roads, inBlock)).toBe('ALo-');
   });
-  it('fronts on the longest allowed side', () => {
-    expect(frontOf(lot, 'ALo-', ['L', 'C'])).toBe('L');
-    expect(frontOf(lot, 'ALo-', ['C', 'A'])).toBe('A');
-    expect(frontOf(lot, 'ALo-', ['C'])).toBeNull();
+  it('fronts on the allowed road it runs along furthest', () => {
+    expect(frontOf(lot, roads, ['L', 'C'])).toBe('L');
+    expect(frontOf(lot, roads, ['C', 'A'])).toBe('A');
+    expect(frontOf(lot, roads, ['C'])).toBeNull();
+  });
+  it('finds a short allowed stretch on a side that is mostly another road', () => {
+    // One side, mostly along the arterial, ends with 10 m along a collector.
+    const r = new RoadIndex();
+    r.add({ points: [[-50, -12.5], [80, -12.5]], category: 'A', half: 12.5 });
+    r.add({ points: [[80, -9], [150, -9]], category: 'C', half: 9 });
+    expect(frontOf(rect(0, 0, 90, 40), r, ['C', 'L'])).toBe('C');
   });
 });

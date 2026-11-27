@@ -25,15 +25,19 @@ export function edgesOf(lot: MultiPolygon, roads: RoadIndex, inBlock: (p: Point2
   return out;
 }
 
-/** The allowed category the lot fronts on most (by length of side), or null if none. */
-export function frontOf(lot: MultiPolygon, edges: string, allowed: Category[]): Category | null {
+const SAMPLE = 2; // m between samples along the outline when finding the front
+
+/** The allowed category the lot runs along furthest (sampled along its whole outline, so a short
+ *  allowed stretch at the end of a side that is mostly another road still counts), or null. */
+export function frontOf(lot: MultiPolygon, roads: RoadIndex, allowed: Category[]): Category | null {
   const len = new Map<Category, number>();
-  let k = 0;
-  for (const poly of lot) for (const ring of poly) for (let i = 0; i < ring.length; i++, k++) {
-    const c = edges[k] as Category;
-    if (!allowed.includes(c)) continue;
-    const a = ring[i], b = ring[(i + 1) % ring.length];
-    len.set(c, (len.get(c) ?? 0) + Math.hypot(b[0] - a[0], b[1] - a[1]));
+  for (const poly of lot) for (const ring of poly) for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const n = Math.max(1, Math.round(L / SAMPLE));
+    for (let k = 0; k < n; k++) {
+      const c = roads.at([a[0] + ((b[0] - a[0]) * (k + 0.5)) / n, a[1] + ((b[1] - a[1]) * (k + 0.5)) / n])?.category;
+      if (c && allowed.includes(c)) len.set(c, (len.get(c) ?? 0) + L / n);
+    }
   }
   let best: Category | null = null, bl = 0;
   for (const [c, l] of len) if (l > bl) { bl = l; best = c; }

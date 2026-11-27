@@ -70,4 +70,15 @@ describe('cutting a block into lots', () => {
     for (const l of out.lots) { expect(l).toHaveLength(1); expect(area(l)).toBeGreaterThan(100); }
     expect(out.lots.length).toBeGreaterThan(10);
   });
+  it('leaves land beyond lot depth of any allowed road as open ground', () => {
+    // A deep block with an allowed road along the south only: the north is far from it.
+    const block = rect(0, 0, 200, 200), allowed = sides(200, 200, ['S']);
+    const out = cutBlock(block, { target: { frontage: 12, depth: 24 }, allowed });
+    partitions(block, out);
+    expect(out.open).not.toBeNull();
+    for (const l of out.lots) {
+      expect(fronts(l, allowed), JSON.stringify(obb(l))).toBe(true);
+      expect(area(l), JSON.stringify(obb(l))).toBeLessThan(6 * 12 * 24); // no lot wrapping round the open ground
+    }
+  });
 });
