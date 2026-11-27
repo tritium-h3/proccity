@@ -115,14 +115,22 @@ export const blocks: Stage = {
       for (const line of runsOf(runs, 'open')) open.add({ points: line, category: 'L', half: 0 });
       const lines = runsOf(runs, 'border');
       const strips: MultiPolygon[] = [];
+      // Each strip takes only what earlier ones left: cut independently, strips overlapped where
+      // they met at a corner (an edge collector beside a border one, most often).
+      let claimed: MultiPolygon = [];
+      const claim = (strip: MultiPolygon) => {
+        const own = claimed.length && strip.length ? difference(strip, claimed) : strip;
+        if (area(own) > 0) claimed = union([...claimed, ...own], []);
+        return own;
+      };
       for (const line of lines) {
-        const strip = intersect(sb.geometry.footprint, offsetPolyline(extend(line, s.collectorWidth), half, 'butt'));
+        const strip = claim(intersect(sb.geometry.footprint, offsetPolyline(extend(line, s.collectorWidth), half, 'butt')));
         strips.push(strip);
         if (area(strip) > 0) roads.add({ points: line, category: 'C', half });
       }
       const edges: Point2[][] = [], edgeStrips: MultiPolygon[] = [];
       for (const line of runsOf(runs, 'edge')) {
-        const strip = intersect(sb.geometry.footprint, offsetPolyline(extend(line, s.collectorWidth), s.collectorWidth, 'butt'));
+        const strip = claim(intersect(sb.geometry.footprint, offsetPolyline(extend(line, s.collectorWidth), s.collectorWidth, 'butt')));
         if (area(strip) <= 0) continue;
         // Rings keep the interior on their left, so a positive offset moves the centreline inwards.
         const centre = offsetPath(line, half);
@@ -170,7 +178,8 @@ export const blocks: Stage = {
         kids.push(node(`${kind}:${count[kind]++}`, kind, strip, { road: id, width: st.width, district: type, ...extra }));
       };
       border.lines.forEach((line, i) => {
-        if (!border.strips[i]) return;
+        // A strip earlier strips took all of (or that missed the footprint) makes no region.
+        if (!border.strips[i] || area(border.strips[i]) <= 0) return;
         const k = key(line), first = !seen.has(k);
         seen.add(k);
         if (first) { stats.borderStreets++; stats.collectors++; }

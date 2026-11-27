@@ -48,6 +48,17 @@ describe('blocks stage', () => {
     expect(divided / developed).toBeGreaterThan(0.5);
   }, 120_000);
 
+  it('keeps the partition where collector strips meet at corners (seeds 2 and 4)', () => {
+    // Strips cut independently overlapped where an edge collector met a border collector.
+    for (const seed of [2, 4]) walk(city(seed), n => {
+      if (n.kind !== 'subdistrict' || !n.children.length) return;
+      const edges = (outline(n) + n.children.reduce((m, k) => m + outline(k), 0)) / 2;
+      const tol = (edges * 1e-3) / area(n.geometry.footprint);
+      const check = checkPartition(n.geometry, n.children.map(k => k.geometry), Math.max(1e-6, tol));
+      expect(check.problems.map(p => p.slice(0, 120)), `seed ${seed} ${n.id}`).toEqual([]);
+    });
+  }, 240_000);
+
   it('records each street once, even where two sub-districts share it', () => {
     const keys = city(1).data!.streets!.map(st => [st.points[0], st.points[st.points.length - 1]].map(p => `${Math.round(p[0])},${Math.round(p[1])}`).sort().join('|'));
     expect(keys.length - new Set(keys).size).toBe(0);
