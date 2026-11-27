@@ -29,7 +29,7 @@ sides will shape each building's faces.
 
 ## Non-goals
 
-- Flag lots (rear lots with an access strip): common, the owner has them on his street, but they'd
+- Flag lots (rear lots with an access strip): common (the owner has them on their own street), but they'd
   complicate lot sectioning and buildings. Open ground takes their place.
 - Buildings, lot sectioning, fences: later stages read the lots' faces.
 - Pins on lots (sizes come from settings; a block's zone pin already exists).
