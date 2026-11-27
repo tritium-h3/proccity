@@ -81,4 +81,11 @@ describe('cutting a block into lots', () => {
       expect(area(l), JSON.stringify(obb(l))).toBeLessThan(6 * 12 * 24); // no lot wrapping round the open ground
     }
   });
+  it('never makes strips running the block’s length that front only on its ends', () => {
+    // Roads all round, ends included: repeated spine cuts left lots 200 m long and 10 m wide.
+    const block = rect(0, 0, 200, 80), allowed = sides(200, 80, ['S', 'N', 'W', 'E']);
+    const out = cutBlock(block, { target: { frontage: 7, depth: 20 }, allowed });
+    partitions(block, out);
+    for (const l of out.lots) expect(obb(l).long, JSON.stringify(obb(l))).toBeLessThan(80);
+  });
 });

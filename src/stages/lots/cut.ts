@@ -151,7 +151,10 @@ export function cutBlock(block: MultiPolygon, ctxIn: LotCtx): { lots: MultiPolyg
       const box = obb(piece), along: Point2 = [Math.cos(box.axis), Math.sin(box.axis)];
       const c = chordThrough(piece, box.centre, along);
       const s = c && split(piece, c);
-      if (s && ok(piece, s)) return s;
+      // Each row keeps frontage along the spine, half its length at least: repeated spine cuts
+      // otherwise left strips the block's length fronting only on its ends.
+      const spine = c ? Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]) : 0;
+      if (s && ok(piece, s) && s.every(side => (frontage(side, ctx.allowed)[0]?.length ?? 0) >= 0.5 * spine)) return s;
       refused++;
     }
     // Square to the street, a whole number of frontages from one end.
