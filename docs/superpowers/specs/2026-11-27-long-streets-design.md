@@ -133,3 +133,32 @@ job now, for every category. A penalty, not a rule, so a piece with no alternati
 - The spacing table and `JUNCTION_COST`.
 - Whether continuation should also be tried at a cut's open ends' opposite side (water): no, for
   now.
+
+## As built (2026-11-27)
+
+- **Junction spacing is measured, not scored.** As a penalty (weights 0.5 and 2 tried) it added
+  about 8% more blocks and left arterial junctions as close as before (206 local ends on
+  arterials in seed 1, against 200 without it): in a superblock ringed by arterials every cross
+  street ends on the ring, whatever the score. `junctions.ts` keeps the spacing table and the
+  stats count close junctions by category (`closeA`, `closeC`, `closeL`).
+- **Local roads keep off arterials** unless the piece can be cut no other way **and** is over two
+  target blocks (`ARTERIAL_FALLBACK`). Never allowed, Rural blocks grew (7–10% of seed 2's land in
+  blocks over 20 ha); allowed whenever needed, 130–200 local ends a city went back on arterials.
+  This is what makes arterial junctions rare; continuation makes crossroads of the rest.
+- The crossing tolerance is the host road's full width + 1 m (junction points are cut ends on the
+  road's edge, so the end opposite is a full width away).
+
+Numbers at 10 km, seeds 1–3, before → after:
+
+| | before | after |
+|---|---|---|
+| median street (route) length | 220 / 256 / 226 m | 380 / 479 / 456 m |
+| 90th percentile | 584 / 621 / 544 m | 1,615 / 1,619 / 1,404 m |
+| longest | 2.7 / 2.9 / 2.9 km | 4.4 / 4.7 / 6.9 km |
+| staggered local-end pairs | 378 / 326 / 440 | 87 / 82 / 98 |
+| local ends on arterials | 163 / – / 214 (one queue, no continuation) | 38 / 51 / 71 |
+| median gap between arterial junctions | ~130 m | 207 / 172 / 188 m |
+| blocks | 1,857 / 1,465 / 2,193 | 1,895 / 1,474 / 2,246 |
+| land in blocks over 20 ha | 0–4% | 0 / 4.2 / 0% |
+
+The blocks stage takes 1.2–1.6 s.
